@@ -1,0 +1,77 @@
+# ── Python / Django ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# ── Environment & secrets (NEVER commit these) ───────────────────────────────
+.env
+.env.*
+!.env.example
+*.env
+
+# ── Next.js / Node ───────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.nuxt/
+dist/
+.cache/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Frontend env ─────────────────────────────────────────────────────────────
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ── OS & Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Deployment ───────────────────────────────────────────────────────────────
+.vercel/
+.railway/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.orig
+*.bak
+coverage/
+htmlcov/
+.coverage
