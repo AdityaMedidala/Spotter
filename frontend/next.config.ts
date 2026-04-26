@@ -1,7 +1,7 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // Leaflet imports its CSS via require() which needs this
+  transpilePackages: ['leaflet', 'react-leaflet'],
 };
 
-export default nextConfig;
+module.exports = nextConfig;

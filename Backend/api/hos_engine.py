@@ -26,12 +26,14 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
 
     # Time tracking
     current_hour = 0.0        # hours elapsed since trip start
+    shift_start_hour = current_hour
     drive_hours_today = 0.0   # hours driven this shift
     on_duty_hours_today = 0.0 # total on duty this shift
     drive_since_break = 0.0   # hours driven since last 30-min break
     cycle_hours = cycle_used_hours
     day = 1
     miles_since_fuel = 0.0
+    miles_driven_total = 0.0
 
     # Segments for today's log
     segments = []
@@ -59,7 +61,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         current_hour += duration
 
     def new_day():
-        nonlocal day, drive_hours_today, on_duty_hours_today
+        nonlocal day, drive_hours_today, on_duty_hours_today, shift_start_hour
         nonlocal drive_since_break, day_start_hour, segments
 
         daily_logs.append({
@@ -75,6 +77,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         })
         day += 1
         day_start_hour = current_hour
+        shift_start_hour = current_hour
         drive_hours_today = 0.0
         on_duty_hours_today = 0.0
         drive_since_break = 0.0
@@ -87,10 +90,26 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         while remaining > 0:
             hours_left_in_day = 24.0 - (current_hour - day_start_hour)
             chunk = min(remaining, hours_left_in_day)
+            # Sleeper berth split logic is not yet implemented, so off_duty is
+            # used as the proxy status for these extended rest segments.
             add_segment("off_duty", chunk)
             remaining = round(remaining - chunk, 6)
             if remaining > 0:
                 new_day()
+
+    def coords_at_miles(miles: float):
+        """Interpolate lat/lng along the polyline proportional to miles driven."""
+        if not polyline or total_miles == 0:
+            return waypoints[0]["lat"], waypoints[0]["lng"]
+        frac = max(0.0, min(1.0, miles / total_miles))
+        idx_f = frac * (len(polyline) - 1)
+        i = int(idx_f)
+        if i >= len(polyline) - 1:
+            return polyline[-1][0], polyline[-1][1]
+        t = idx_f - i
+        lat = polyline[i][0] + t * (polyline[i + 1][0] - polyline[i][0])
+        lng = polyline[i][1] + t * (polyline[i + 1][1] - polyline[i][1])
+        return lat, lng
 
     # --- Pickup stop (1 hr on-duty) ---
     stops.append({
@@ -112,13 +131,14 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
     while remaining_drive > 0:
         # Check cycle limit
         if cycle_hours >= MAX_CYCLE_HOURS:
+            _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "restart",
                 "location": "Current location",
                 "arrival_time": format_time(current_hour),  # FIX 1
                 "duration_hours": RESTART_HOURS,
-                "lat": waypoints[0]["lat"],
-                "lng": waypoints[0]["lng"],
+                "lat": _lat,
+                "lng": _lng,
             })
             # FIX 4: split 34hr restart across calendar day boundaries
             add_offduty_split(RESTART_HOURS)
@@ -138,35 +158,42 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
 
         # Need a 30-min break?
         if drive_since_break >= BREAK_AFTER_HOURS:
+            _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "rest",
                 "location": "Rest area",
                 "arrival_time": format_time(current_hour),  # FIX 1
                 "duration_hours": BREAK_DURATION,
-                "lat": waypoints[0]["lat"],
-                "lng": waypoints[0]["lng"],
+                "lat": _lat,
+                "lng": _lng,
             })
+            # Sleeper berth split logic is not yet implemented, so off_duty is
+            # used as the proxy status for this rest segment.
             add_segment("off_duty", BREAK_DURATION)
-            on_duty_hours_today += BREAK_DURATION
             drive_since_break = 0.0
             continue
 
         # Need mandatory 10-hr reset?
-        if drive_hours_today >= MAX_DRIVE_HOURS or on_duty_hours_today >= MAX_WINDOW_HOURS:
+        if drive_hours_today >= MAX_DRIVE_HOURS or (current_hour - shift_start_hour) >= MAX_WINDOW_HOURS:
+            _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "rest",
                 "location": "Rest stop / sleeper berth",
                 "arrival_time": format_time(current_hour),  # FIX 1
                 "duration_hours": REQUIRED_OFF_HOURS,
-                "lat": waypoints[0]["lat"],
-                "lng": waypoints[0]["lng"],
+                "lat": _lat,
+                "lng": _lng,
             })
+            # Sleeper berth split logic is not yet implemented, so off_duty is
+            # used as the proxy status for this reset segment.
             add_segment("off_duty", REQUIRED_OFF_HOURS)
             new_day()
             continue
 
         if can_drive <= 0:
             # Force a reset
+            # Sleeper berth split logic is not yet implemented, so off_duty is
+            # used as the proxy status for this reset segment.
             add_segment("off_duty", REQUIRED_OFF_HOURS)
             new_day()
             continue
@@ -188,15 +215,17 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             miles_driven = (drive_to_fuel / total_drive_time) * total_miles
             remaining_miles -= miles_driven
             miles_since_fuel += miles_driven
+            miles_driven_total += miles_driven
 
             # Fuel stop
+            _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "fuel",
                 "location": "Fuel stop",
                 "arrival_time": format_time(current_hour),  # FIX 1
                 "duration_hours": FUEL_STOP_HOURS,
-                "lat": waypoints[0]["lat"],
-                "lng": waypoints[0]["lng"],
+                "lat": _lat,
+                "lng": _lng,
             })
             add_segment("on_duty", FUEL_STOP_HOURS)
             on_duty_hours_today += FUEL_STOP_HOURS
@@ -214,16 +243,18 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         miles_driven = (can_drive / total_drive_time) * total_miles
         remaining_miles -= miles_driven
         miles_since_fuel += miles_driven
+        miles_driven_total += miles_driven
 
     # FIX 2: Check if dropoff would breach the cycle limit before adding it
     if cycle_hours + DROPOFF_HOURS > MAX_CYCLE_HOURS:
+        _lat, _lng = coords_at_miles(miles_driven_total)
         stops.append({
             "type": "restart",
             "location": "Current location",
             "arrival_time": format_time(current_hour),
             "duration_hours": RESTART_HOURS,
-            "lat": waypoints[0]["lat"],
-            "lng": waypoints[0]["lng"],
+            "lat": _lat,
+            "lng": _lng,
         })
         add_offduty_split(RESTART_HOURS)
         new_day()
