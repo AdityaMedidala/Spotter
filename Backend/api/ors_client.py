@@ -58,7 +58,7 @@ async def get_route(current: str, pickup: str, dropoff: str) -> dict:
         d_lat, d_lng = await geocode(dropoff, client)
 
         r = await client.post(
-            f"{BASE}/v2/directions/driving-hgv/geojson",
+            f"{BASE}/v2/directions/driving-car/geojson",
             headers={"Authorization": ORS_KEY, "Content-Type": "application/json"},
             json={
                 "coordinates": [
