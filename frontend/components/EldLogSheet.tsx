@@ -5,22 +5,14 @@ import type { DailyLog, LogSegment, Stop } from './types';
 import { ELD_COLORS, ELD_LABELS } from './types';
 
 // ── EXACT PIXEL COORDINATES ──────────────────────────────────────────────────
-// Measured directly from blank-paper-log.png (513×518px).
+// All coordinates are expressed in the "logical" coordinate space where the
+// form image is its natural 513×518 size. The render pipeline scales that
+// space up to a higher physical resolution for crispness.
 //
 // Grid horizontal:
 //   GRID_LEFT  = 64    (first hour tick — midnight)
 //   GRID_RIGHT = 454   (last hour tick — midnight end)
 //   GRID_WIDTH = 390px for 24 hours → 16.25px per hour
-//
-// Row Y centres:
-//   Off Duty          y = 192
-//   Sleeper Berth     y = 209
-//   Driving           y = 226
-//   On Duty (ND)      y = 244
-//
-// Remarks zone (where rotated location labels live):
-//   REMARKS_TOP    = 260  (first pixel below the grid)
-//   REMARKS_LABEL  = 280  (where the rotated text starts)
 // ────────────────────────────────────────────────────────────────────────────
 const GRID_LEFT  = 64;
 const GRID_RIGHT = 454;
@@ -37,11 +29,16 @@ const ROW_Y: Record<LogSegment['status'], number> = {
 const LINE_H = 8;
 const CONNECTOR_W = 2;
 
-const REMARKS_TICK_TOP = 252;   // top of the small tick that drops from the grid
-const REMARKS_TICK_BOT = 268;   // where the tick ends and label begins
-const REMARKS_LABEL_Y  = 272;   // y at which the rotated label starts (extends downward)
+const REMARKS_TICK_TOP = 252;
+const REMARKS_TICK_BOT = 268;
+const REMARKS_LABEL_Y  = 272;
 
-// ── Text field positions ─────────────────────────────────────────────────────
+// FIX: Render the canvas at a high physical resolution regardless of DPR. This
+// makes text and shapes drawn in code (bars, connectors, labels, totals) look
+// sharp even when the underlying form PNG is low-res. The form image gets
+// upscaled with smoothing so it's no worse than before.
+const RENDER_SCALE = 3; // 513×518 → 1539×1554 internal buffer
+
 const TEXT_FIELDS = {
   date:        { x: 55,  y: 25,  font: '10px JetBrains Mono, monospace' },
   totalMiles:  { x: 165, y: 25,  font: '10px JetBrains Mono, monospace' },
@@ -56,15 +53,13 @@ interface Props {
   totalDriveHours: number;
   fromLocation: string;
   toLocation: string;
-  // NEW: All trip stops. The component filters to those occurring on this day
-  // and renders rotated location labels below the grid.
   stops?: Stop[];
 }
 
 interface RemarkLabel {
-  hour: number;        // 0–24, position along the grid for this day
-  label: string;       // text to display (e.g. "Pickup — St. Louis, MO")
-  color: string;       // accent color tied to stop type
+  hour: number;
+  label: string;
+  color: string;
 }
 
 export default function EldLogSheet({
@@ -87,20 +82,31 @@ export default function EldLogSheet({
     img.onload = () => {
       if (cancelled) return;
 
-      // Retina-aware sizing
+      // ── Resolution strategy ──────────────────────────────────────────────
+      // Logical drawing space is 513×518 (the PNG's natural size). All
+      // coordinate constants above are expressed in that space. We multiply
+      // by RENDER_SCALE for the actual pixel buffer, then pin CSS size to
+      // the natural dimensions so layout stays stable.
       const dpr = window.devicePixelRatio || 1;
-      canvas.width  = img.naturalWidth  * dpr;
-      canvas.height = img.naturalHeight * dpr;
-      canvas.style.width  = `${img.naturalWidth}px`;
-      canvas.style.height = `${img.naturalHeight}px`;
-      ctx.scale(dpr, dpr);
+      const totalScale = RENDER_SCALE * dpr;
+      const logicalW = img.naturalWidth;
+      const logicalH = img.naturalHeight;
+
+      canvas.width  = logicalW * totalScale;
+      canvas.height = logicalH * totalScale;
+      canvas.style.width  = `${logicalW}px`;
+      canvas.style.height = `${logicalH}px`;
+      ctx.scale(totalScale, totalScale);
+
+      // High-quality image smoothing for the upscaled form background
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       // ── 1. Background ────────────────────────────────────────────────────
-      ctx.drawImage(img, 0, 0);
+      ctx.drawImage(img, 0, 0, logicalW, logicalH);
 
       // ── 2. Metadata text ─────────────────────────────────────────────────
       ctx.fillStyle = '#111827';
-
       ctx.font = TEXT_FIELDS.date.font;
       ctx.fillText(formatDate(log.date), TEXT_FIELDS.date.x, TEXT_FIELDS.date.y);
 
@@ -123,7 +129,7 @@ export default function EldLogSheet({
       ctx.fillStyle = '#374151';
       ctx.fillText(`Day ${log.day}`, 440, 20);
 
-      // ── 3. Duty-status horizontal bars ───────────────────────────────────
+      // ── 3. Duty-status bars ─────────────────────────────────────────────
       log.segments.forEach((seg) => {
         const rowY = ROW_Y[seg.status];
         if (rowY === undefined) return;
@@ -142,7 +148,7 @@ export default function EldLogSheet({
         ctx.shadowBlur = 0;
       });
 
-      // ── 4. Vertical connectors between status changes ────────────────────
+      // ── 4. Vertical connectors ──────────────────────────────────────────
       for (let i = 0; i < log.segments.length - 1; i++) {
         const cur  = log.segments[i];
         const next = log.segments[i + 1];
@@ -166,7 +172,7 @@ export default function EldLogSheet({
         ctx.shadowBlur = 0;
       }
 
-      // ── 5. Total hours column (right side) ───────────────────────────────
+      // ── 5. Total hours column ───────────────────────────────────────────
       const TOTAL_X = 462;
       const totals: Record<LogSegment['status'], number> = {
         off_duty: 0, sleeper: 0, driving: 0, on_duty: 0,
@@ -188,20 +194,15 @@ export default function EldLogSheet({
       ctx.fillStyle = '#374151';
       ctx.fillText(`${total24.toFixed(1)}h`, TOTAL_X, 260);
 
-      // ── 6. NEW: Remarks — rotated location labels below the grid ─────────
-      // Same style as the FMCSA John Doe example (page 18 of the guide):
-      // a thin tick from the grid drops into the remarks zone, then the
-      // location text is written diagonally (rotated 60°) so long names fit.
+      // ── 6. Remarks — rotated location labels ────────────────────────────
       const remarks = buildRemarksForDay(log, stops ?? []);
 
       remarks.forEach((r) => {
         const x = GRID_LEFT + Math.max(0, Math.min(24, r.hour)) * HOUR_W;
 
-        // Tick line dropping from the grid into the remarks zone
         ctx.fillStyle = r.color;
         ctx.fillRect(x - 0.5, REMARKS_TICK_TOP, 1, REMARKS_TICK_BOT - REMARKS_TICK_TOP);
 
-        // Rotated label
         ctx.save();
         ctx.translate(x, REMARKS_LABEL_Y);
         ctx.rotate((60 * Math.PI) / 180);
@@ -362,7 +363,6 @@ export default function EldLogSheet({
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr + 'T00:00:00');
@@ -380,18 +380,14 @@ function formatHour(h: number): string {
   return `${displayH}:${mm.toString().padStart(2, '0')} ${period}`;
 }
 
-// Convert a stop into a "labeled hour mark" anchored to this day.
-// Returns null if the stop falls on a different calendar day than this log.
 function buildRemarksForDay(log: DailyLog, stops: Stop[]): RemarkLabel[] {
   if (!stops || stops.length === 0) return [];
 
   return stops
     .map<RemarkLabel | null>((stop) => {
-      // arrival_time is ISO 8601 like "2026-04-27T19:00:00".
       const arr = new Date(stop.arrival_time);
       if (isNaN(arr.getTime())) return null;
 
-      // Match by calendar date. log.date is "YYYY-MM-DD" in trip-start TZ.
       const yyyy = arr.getFullYear();
       const mm   = String(arr.getMonth() + 1).padStart(2, '0');
       const dd   = String(arr.getDate()).padStart(2, '0');
@@ -416,9 +412,8 @@ function buildRemarksForDay(log: DailyLog, stops: Stop[]): RemarkLabel[] {
         restart: '34hr',
       };
 
-      // Truncate long location strings so labels don't smash into each other.
-      const loc = stop.location.length > 22
-        ? stop.location.slice(0, 21) + '…'
+      const loc = stop.location.length > 28
+        ? stop.location.slice(0, 27) + '…'
         : stop.location;
 
       return {

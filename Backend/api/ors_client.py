@@ -4,46 +4,6 @@ from decouple import config
 ORS_KEY = config('ORS_API_KEY')
 BASE = "https://api.openrouteservice.org"
 
-# ORS layers that are too vague to route to/from.
-# "region" = state/province, "country" = entire country,
-# "macroregion" = multi-state area, "continent" = self-explanatory.
-_VAGUE_LAYERS = {"region", "country", "macroregion", "continent"}
-
-# ORS confidence below this threshold usually means a poor match
-# (e.g. snapped to a state centroid in the middle of nowhere).
-_MIN_CONFIDENCE = 0.4
-
-
-def _validate_geocode_result(feature: dict, original_query: str) -> None:
-    """
-    Raise ValueError with a user-friendly message if the geocoded result
-    is too vague or unlikely to be routable by truck.
-    """
-    props = feature.get("properties", {})
-    layer = props.get("layer", "")
-    label = props.get("label", original_query)
-    confidence = props.get("confidence", 1.0)
-
-    if layer in _VAGUE_LAYERS:
-        # Give a helpful hint based on what ORS matched
-        if layer == "region":
-            hint = f'Try a city name instead, e.g. "Albuquerque, NM" or "Santa Fe, NM"'
-        elif layer == "country":
-            hint = "Please enter a specific city or address"
-        else:
-            hint = "Please enter a more specific location"
-
-        raise ValueError(
-            f'"{original_query}" resolved to an entire {layer} ({label}). '
-            f'{hint}.'
-        )
-
-    if confidence < _MIN_CONFIDENCE:
-        raise ValueError(
-            f'"{original_query}" could not be matched confidently (matched: "{label}"). '
-            f'Please enter a more specific address or city name.'
-        )
-
 
 async def geocode(place: str, client: httpx.AsyncClient) -> tuple[float, float]:
     r = await client.get(
@@ -54,18 +14,51 @@ async def geocode(place: str, client: httpx.AsyncClient) -> tuple[float, float]:
     r.raise_for_status()
     features = r.json().get("features", [])
     if not features:
-        raise ValueError(f'Location not found: "{place}". Please enter a valid US city or address.')
+        raise ValueError(f"Location not found: {place!r}")
+    coords = features[0]["geometry"]["coordinates"]
+    return coords[1], coords[0]  # lat, lng
 
-    feature = features[0]
 
-    # Validate before returning — catches states, countries, low-confidence matches
-    _validate_geocode_result(feature, place)
+async def reverse_geocode(lat: float, lng: float, client: httpx.AsyncClient) -> str:
+    """Convert lat/lng → 'City, ST' string. Falls back to nearest locality.
 
-    coords = feature["geometry"]["coordinates"]
-    return coords[1], coords[0]
+    On any failure (timeout, no result, etc.) returns an empty string so the
+    caller can decide on a fallback label. We never raise here because rest
+    stops are best-effort labels — the trip is still valid without them.
+    """
+    try:
+        r = await client.get(
+            f"{BASE}/geocode/reverse",
+            params={
+                "api_key": ORS_KEY,
+                "point.lat": lat,
+                "point.lon": lng,
+                "size": 1,
+                "layers": "locality,region",
+                "boundary.country": "US",
+            },
+            timeout=6.0,
+        )
+        r.raise_for_status()
+        features = r.json().get("features", [])
+        if not features:
+            return ""
+        props = features[0].get("properties", {})
+        # Prefer "locality, region" (e.g. "Memphis, Tennessee"). Build short form
+        # using the standard 2-letter state abbreviation when available.
+        locality = props.get("locality") or props.get("name") or ""
+        region_a = props.get("region_a") or ""  # e.g. "TN"
+        region   = props.get("region")   or ""  # e.g. "Tennessee"
+        state = region_a if region_a else region
+        if locality and state:
+            return f"{locality}, {state}"
+        return locality or state or ""
+    except (httpx.HTTPError, ValueError, KeyError):
+        return ""
 
 
 async def autocomplete_location(query: str) -> list[dict]:
+    """Return up to 6 location suggestions for the given query."""
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{BASE}/geocode/autocomplete",
@@ -96,8 +89,6 @@ async def autocomplete_location(query: str) -> list[dict]:
 
 async def get_route(current: str, pickup: str, dropoff: str) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
-        # Each geocode call now validates the result before returning.
-        # ValueError is raised with a user-friendly message for vague locations.
         c_lat, c_lng = await geocode(current, client)
         p_lat, p_lng = await geocode(pickup, client)
         d_lat, d_lng = await geocode(dropoff, client)
@@ -133,3 +124,35 @@ async def get_route(current: str, pickup: str, dropoff: str) -> dict:
             {"lat": d_lat, "lng": d_lng, "name": dropoff},
         ],
     }
+
+
+async def enrich_stop_locations(stops: list[dict]) -> list[dict]:
+    """Reverse-geocode rest/fuel/restart stops in-place and return them.
+
+    Pickup and dropoff already have human-readable names from waypoints, so
+    they're skipped. Generic stop types ('rest', 'fuel', 'restart') get their
+    'location' field replaced with the actual city/state.
+    """
+    GENERIC_TYPES = {"rest", "fuel", "restart"}
+
+    # Single shared client for all reverse-geocode calls
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for stop in stops:
+            if stop.get("type") not in GENERIC_TYPES:
+                continue
+            lat = stop.get("lat")
+            lng = stop.get("lng")
+            if lat is None or lng is None:
+                continue
+            city = await reverse_geocode(lat, lng, client)
+            if city:
+                # Preserve the stop type prefix so users still see what kind
+                # of stop it is, e.g. "Rest area near Memphis, TN" or
+                # "Fuel stop near Little Rock, AR"
+                prefix = {
+                    "rest":    "Rest near",
+                    "fuel":    "Fuel stop near",
+                    "restart": "34hr restart near",
+                }.get(stop["type"], "Near")
+                stop["location"] = f"{prefix} {city}"
+    return stops
