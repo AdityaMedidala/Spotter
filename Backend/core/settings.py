@@ -5,11 +5,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 
-# Default to False so a missing env var on a prod server doesn't leak stack traces.
-# Set DEBUG=True in your local .env for development.
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# Read as a comma-separated list from the env. Defaults are dev-only.
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS',
     default='localhost,127.0.0.1',
@@ -28,9 +25,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',        # must be first
-    'whitenoise.middleware.WhiteNoiseMiddleware',           # right after Security
-    'corsheaders.middleware.CorsMiddleware',                # before CommonMiddleware
+    'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -81,7 +78,6 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# STATICFILES_STORAGE was removed in Django 4.2+ — use STORAGES dict instead.
 STORAGES = {
     'default': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
@@ -99,10 +95,8 @@ CORS_ALLOWED_ORIGINS = [
     *([config('FRONTEND_URL')] if config('FRONTEND_URL', default='') else []),
 ]
 
-# Allow all in development — set to False in production
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL', default=False, cast=bool)
 
-# Ensure CORS headers are added to ALL responses, including 404s and errors.
 CORS_URLS_REGEX = r'^/api/.*$'
 
 CORS_ALLOW_HEADERS = [
@@ -122,3 +116,37 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
+
+# Force all loggers to stdout so Railway Deploy Logs capture api.* exceptions.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'api': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
