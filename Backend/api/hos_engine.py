@@ -99,16 +99,36 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
 
     def coords_at_miles(miles: float):
         """Interpolate lat/lng along the polyline proportional to miles driven."""
-        if not polyline or total_miles == 0:
+        if total_miles == 0:
             return waypoints[0]["lat"], waypoints[0]["lng"]
+
         frac = max(0.0, min(1.0, miles / total_miles))
-        idx_f = frac * (len(polyline) - 1)
-        i = int(idx_f)
-        if i >= len(polyline) - 1:
-            return polyline[-1][0], polyline[-1][1]
-        t = idx_f - i
-        lat = polyline[i][0] + t * (polyline[i + 1][0] - polyline[i][0])
-        lng = polyline[i][1] + t * (polyline[i + 1][1] - polyline[i][1])
+
+        # If polyline exists and has valid geographic coordinates, use it
+        if polyline and len(polyline) >= 2:
+            mid = polyline[len(polyline) // 2]
+            valid_lat = 24.0 <= mid[0] <= 50.0
+            valid_lng = -125.0 <= mid[1] <= -66.0
+            if valid_lat and valid_lng:
+                idx_f = frac * (len(polyline) - 1)
+                i = int(idx_f)
+                if i >= len(polyline) - 1:
+                    return polyline[-1][0], polyline[-1][1]
+                t = idx_f - i
+                lat = polyline[i][0] + t * (polyline[i + 1][0] - polyline[i][0])
+                lng = polyline[i][1] + t * (polyline[i + 1][1] - polyline[i][1])
+                return lat, lng
+
+        # Fallback: interpolate linearly between waypoints
+        n_segs = len(waypoints) - 1
+        if n_segs <= 0:
+            return waypoints[0]["lat"], waypoints[0]["lng"]
+        seg_f = frac * n_segs
+        i = min(int(seg_f), n_segs - 1)
+        t = seg_f - i
+        a, b = waypoints[i], waypoints[i + 1]
+        lat = a["lat"] + t * (b["lat"] - a["lat"])
+        lng = a["lng"] + t * (b["lng"] - a["lng"])
         return lat, lng
 
     # --- Pickup stop (1 hr on-duty) ---
@@ -148,9 +168,12 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
 
         # How much can we drive right now?
         cycle_remaining = MAX_CYCLE_HOURS - cycle_hours
+        # FIX 5: Use wall-clock elapsed since shift start for the 14hr window,
+        # NOT on_duty_hours_today. Off-duty breaks (e.g. the 30-min break) do
+        # not extend the 14hr driving window per § 395.3(a)(2).
         can_drive = min(
             MAX_DRIVE_HOURS - drive_hours_today,
-            MAX_WINDOW_HOURS - on_duty_hours_today,
+            MAX_WINDOW_HOURS - (current_hour - shift_start_hour),
             BREAK_AFTER_HOURS - drive_since_break if drive_since_break < BREAK_AFTER_HOURS else 0,
             cycle_remaining,
             remaining_drive,
@@ -244,6 +267,22 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         remaining_miles -= miles_driven
         miles_since_fuel += miles_driven
         miles_driven_total += miles_driven
+
+    # FIX 6: Check if dropoff would breach the 14hr window before adding it.
+    # Window check must come BEFORE the cycle check — a driver could need
+    # both a 10hr reset (window exhausted) and a 34hr restart (cycle exhausted).
+    if (current_hour - shift_start_hour) + DROPOFF_HOURS > MAX_WINDOW_HOURS:
+        _lat, _lng = coords_at_miles(miles_driven_total)
+        stops.append({
+            "type": "rest",
+            "location": "Rest stop / sleeper berth",
+            "arrival_time": format_time(current_hour),
+            "duration_hours": REQUIRED_OFF_HOURS,
+            "lat": _lat,
+            "lng": _lng,
+        })
+        add_segment("off_duty", REQUIRED_OFF_HOURS)
+        new_day()
 
     # FIX 2: Check if dropoff would breach the cycle limit before adding it
     if cycle_hours + DROPOFF_HOURS > MAX_CYCLE_HOURS:

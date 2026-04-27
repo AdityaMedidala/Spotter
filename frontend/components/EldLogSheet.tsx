@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { DailyLog, LogSegment } from './types'; // Import LogSegment here
+import type { DailyLog, LogSegment } from './types';
 import { ELD_COLORS, ELD_LABELS } from './types';
 
 // ── EXACT PIXEL COORDINATES ──────────────────────────────────────────────────
@@ -34,7 +34,6 @@ const ROW_Y: Record<LogSegment['status'], number> = {
 const LINE_H = 8;   // thickness of the duty-status bar
 
 // ── Text field positions (approx, visually tuned) ────────────────────────────
-// These overlay the blank form fields with trip metadata.
 const TEXT_FIELDS = {
   date:        { x: 55,  y: 25,  font: '10px JetBrains Mono, monospace' },
   totalMiles:  { x: 165, y: 25,  font: '10px JetBrains Mono, monospace' },
@@ -62,13 +61,26 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Load the blank log background
+    // FIX: Cleanup guard — prevents stale draws when the effect re-runs
+    // (React 18 strict mode runs effects twice; img.onload from the first
+    // run could otherwise fire after a second run has already started).
+    let cancelled = false;
+
     const img = new Image();
     img.src = '/blank-paper-log.png';
+
     img.onload = () => {
-      // Set canvas to natural image dimensions
-      canvas.width  = img.naturalWidth;  // 513
-      canvas.height = img.naturalHeight; // 518
+      if (cancelled) return;
+
+      // FIX: Retina-aware sizing. Internal pixel buffer scales with DPR so
+      // the canvas stays sharp on 2x+ displays; CSS size stays at the
+      // image's natural dimensions.
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width  = img.naturalWidth  * dpr;
+      canvas.height = img.naturalHeight * dpr;
+      canvas.style.width  = `${img.naturalWidth}px`;
+      canvas.style.height = `${img.naturalHeight}px`;
+      ctx.scale(dpr, dpr);
 
       // ── 1. Draw background image ──────────────────────────────────────────
       ctx.drawImage(img, 0, 0);
@@ -129,10 +141,8 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
       });
 
       // ── 4. Total hours column (right side) ───────────────────────────────
-      // Approximate x position of the "Total Hours" boxes
       const TOTAL_X = 462;
 
-      // Inside step 4 of your useEffect:
       const totals: Record<LogSegment['status'], number> = { off_duty: 0, sleeper: 0, driving: 0, on_duty: 0 };
       log.segments.forEach((s) => {
         totals[s.status] = (totals[s.status] || 0) + (s.end_hour - s.start_hour);
@@ -154,6 +164,7 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
     };
 
     img.onerror = () => {
+      if (cancelled) return;
       // Fallback: draw a placeholder grid if image fails to load
       canvas.width  = 513;
       canvas.height = 518;
@@ -162,6 +173,12 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
       ctx.fillStyle = '#374151';
       ctx.font = '14px JetBrains Mono, monospace';
       ctx.fillText('Place blank-paper-log.png in /public/', 20, 260);
+    };
+
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
     };
   }, [log, totalMiles, totalDriveHours, fromLocation, toLocation]);
 

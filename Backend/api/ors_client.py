@@ -5,16 +5,18 @@ ORS_KEY = config('ORS_API_KEY')
 BASE = "https://api.openrouteservice.org"
 
 
-async def geocode(place: str) -> tuple[float, float]:
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{BASE}/geocode/search",
-            params={"api_key": ORS_KEY, "text": place, "size": 1},
-            timeout=10.0,
-        )
-        r.raise_for_status()
-        coords = r.json()["features"][0]["geometry"]["coordinates"]
-        return coords[1], coords[0]  # lat, lng
+async def geocode(place: str, client: httpx.AsyncClient) -> tuple[float, float]:
+    r = await client.get(
+        f"{BASE}/geocode/search",
+        params={"api_key": ORS_KEY, "text": place, "size": 1},
+        timeout=10.0,
+    )
+    r.raise_for_status()
+    features = r.json().get("features", [])
+    if not features:
+        raise ValueError(f"Location not found: {place!r}")
+    coords = features[0]["geometry"]["coordinates"]
+    return coords[1], coords[0]  # lat, lng
 
 
 async def autocomplete_location(query: str) -> list[dict]:
@@ -48,11 +50,13 @@ async def autocomplete_location(query: str) -> list[dict]:
 
 
 async def get_route(current: str, pickup: str, dropoff: str) -> dict:
-    c_lat, c_lng = await geocode(current)
-    p_lat, p_lng = await geocode(pickup)
-    d_lat, d_lng = await geocode(dropoff)
+    # Single shared client — reuses the TCP connection across all 4 calls
+    # (3 geocodes + 1 directions) instead of opening fresh ones each time.
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        c_lat, c_lng = await geocode(current, client)
+        p_lat, p_lng = await geocode(pickup, client)
+        d_lat, d_lng = await geocode(dropoff, client)
 
-    async with httpx.AsyncClient() as client:
         r = await client.post(
             f"{BASE}/v2/directions/driving-hgv/geojson",
             headers={"Authorization": ORS_KEY, "Content-Type": "application/json"},
@@ -63,12 +67,14 @@ async def get_route(current: str, pickup: str, dropoff: str) -> dict:
                     [d_lng, d_lat],
                 ]
             },
-            timeout=15.0,
         )
         r.raise_for_status()
 
     data = r.json()
-    feature = data["features"][0]
+    features = data.get("features", [])
+    if not features:
+        raise ValueError("ORS returned no route — locations may not be reachable by truck")
+    feature = features[0]
     summary = feature["properties"]["summary"]
     coords = feature["geometry"]["coordinates"]
 

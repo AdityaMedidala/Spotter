@@ -51,7 +51,10 @@ export default function TripSummary({ result, cycleUsedHours }: Props) {
     ? (total_miles / total_drive_hours).toFixed(0)
     : '—';
 
-  const remainingCycle = Math.max(0, 70 - cycleUsedHours - result.total_drive_hours).toFixed(1);
+  // FIX: Cycle burns on all on-duty time (driving + pickup + dropoff + fuel),
+  // not just driving. Sum total_on_duty across daily logs for an accurate count.
+  const totalOnDuty = result.daily_logs.reduce((acc, d) => acc + d.total_on_duty, 0);
+  const remainingCycle = Math.max(0, 70 - cycleUsedHours - totalOnDuty).toFixed(1);
 
   return (
     <div className="fade-up">

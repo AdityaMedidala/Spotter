@@ -4,8 +4,17 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
-DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = ['*']
+
+# Default to False so a missing env var on a prod server doesn't leak stack traces.
+# Set DEBUG=True in your local .env for development.
+DEBUG = config('DEBUG', default=False, cast=bool)
+
+# Read as a comma-separated list from the env. Defaults are dev-only.
+ALLOWED_HOSTS = config(
+    'ALLOWED_HOSTS',
+    default='localhost,127.0.0.1',
+    cast=lambda v: [h.strip() for h in v.split(',') if h.strip()],
+)
 
 INSTALLED_APPS = [
     'django.contrib.admin',

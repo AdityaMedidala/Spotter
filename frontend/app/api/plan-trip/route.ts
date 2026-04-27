@@ -5,16 +5,24 @@ const DJANGO =
   process.env.NEXT_PUBLIC_API_URL ??
   'http://localhost:8000';
 
+const TIMEOUT_MS = 30_000; // ORS routing + geocoding can take a few seconds; 30s is generous
+
 export async function POST(request: NextRequest) {
+  const upstreamUrl = `${DJANGO}/api/plan-trip`;
+
+  // FIX: Abort guard so a hung Django/ORS doesn't keep this proxy waiting forever.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   try {
     const body = await request.json();
-    const upstreamUrl = `${DJANGO}/api/plan-trip`;
 
     const upstream = await fetch(upstreamUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       cache: 'no-store',
+      signal: controller.signal,
     });
 
     const data = await upstream.json().catch(() => ({}));
@@ -30,10 +38,19 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error('[plan-trip proxy] timeout after', TIMEOUT_MS, 'ms');
+      return NextResponse.json(
+        { detail: `Request timed out after ${TIMEOUT_MS / 1000}s — routing service may be slow` },
+        { status: 504 },
+      );
+    }
     console.error('[plan-trip proxy]', err);
     return NextResponse.json(
       { detail: `Failed to reach backend at ${DJANGO}` },
       { status: 502 },
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }

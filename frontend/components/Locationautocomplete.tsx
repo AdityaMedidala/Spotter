@@ -40,10 +40,17 @@ export default function Locationautocomplete({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // FIX: Tracks the label that was just selected from the dropdown so we don't
+  // refetch/reopen when the parent's value updates back into us.
+  const lastSelectedRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!debouncedValue || debouncedValue.length < 2) return;
+    // Skip the fetch if this value came from a programmatic selection.
+    // Cleared the moment the user types again (see input onChange below).
+    if (debouncedValue === lastSelectedRef.current) return;
+
     let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     void fetch(`${AUTOCOMPLETE_URL}?q=${encodeURIComponent(debouncedValue)}`)
       .then(async (r) => {
@@ -88,6 +95,7 @@ export default function Locationautocomplete({
   }, []);
 
   const select = useCallback((s: Suggestion) => {
+    lastSelectedRef.current = s.label;
     onChange(s.label);
     setSuggestions([]);
     setOpen(false);
@@ -153,6 +161,15 @@ export default function Locationautocomplete({
           value={value}
           placeholder={placeholder}
           onChange={e => {
+            // FIX: clear the just-selected guard the moment the user starts
+            // editing. Otherwise typing a new query right after a selection
+            // wouldn't refetch.
+            if (
+              lastSelectedRef.current !== null &&
+              e.target.value !== lastSelectedRef.current
+            ) {
+              lastSelectedRef.current = null;
+            }
             onChange(e.target.value);
             if (e.target.value.length < 2) {
               setSuggestions([]);
