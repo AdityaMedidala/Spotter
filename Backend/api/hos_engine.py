@@ -39,11 +39,20 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
     segments = []
     day_start_hour = 0.0
 
-    # FIX 1: Real datetime base for ISO 8601 arrival_time strings
-    trip_start = datetime.now().replace(minute=0, second=0, microsecond=0)
+    # FIX 1: Real datetime base for ISO 8601 arrival_time strings.
+    # FIX 8: Anchor trip_start to calendar midnight (not current wall-clock
+    # hour). This makes Day 1's shift-relative segment hours exactly equal
+    # to calendar clock hours, so the canvas hour labels (Midnight, 1AM, …)
+    # are accurate for Day 1 and remarks line up with bars without any
+    # offset arithmetic. For Day 2+ the canvas hours are shift-relative,
+    # but bars and remarks still align (frontend uses log.start_time).
+    trip_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
     def format_time(elapsed_hours: float) -> str:
         return (trip_start + timedelta(hours=elapsed_hours)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    def shift_start_dt(absolute_hour: float) -> datetime:
+        return trip_start + timedelta(hours=absolute_hour)
 
     def add_segment(status: str, duration: float):
         # Add this guard clause to prevent 0.0 hour segments:
@@ -64,9 +73,15 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         nonlocal day, drive_hours_today, on_duty_hours_today, shift_start_hour
         nonlocal drive_since_break, day_start_hour, segments
 
+        # Calendar date and ISO start time of THIS shift (the one we're closing).
+        # Use the shift's actual start hour, not (today + day index), so the
+        # date field reflects when the shift really began.
+        shift_start = shift_start_dt(day_start_hour)
+
         daily_logs.append({
             "day": day,
-            "date": (datetime.today() + timedelta(days=day - 1)).strftime("%Y-%m-%d"),
+            "date": shift_start.strftime("%Y-%m-%d"),
+            "start_time": shift_start.strftime("%Y-%m-%dT%H:%M:%S"),
             "segments": list(segments),
             "total_drive": round(drive_hours_today, 2),
             "total_on_duty": round(sum(
@@ -136,7 +151,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
     stops.append({
         "type": "pickup",
         "location": waypoints[1]["name"],
-        "arrival_time": format_time(current_hour),  # FIX 1
+        "arrival_time": format_time(current_hour),
         "duration_hours": PICKUP_HOURS,
         "lat": waypoints[1]["lat"],
         "lng": waypoints[1]["lng"],
@@ -156,12 +171,11 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             stops.append({
                 "type": "restart",
                 "location": "Current location",
-                "arrival_time": format_time(current_hour),  # FIX 1
+                "arrival_time": format_time(current_hour),
                 "duration_hours": RESTART_HOURS,
                 "lat": _lat,
                 "lng": _lng,
             })
-            # FIX 7: 34hr restart logged as sleeper berth (split across days)
             add_sleeper_split(RESTART_HOURS)
             new_day()
             cycle_hours = 0.0
@@ -181,14 +195,12 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         )
 
         # Need a 30-min break?
-        # FMCSA §395.3(a)(3)(ii) allows the break as off-duty, on-duty, or
-        # sleeper berth. Off-duty is the most common in practice.
         if drive_since_break >= BREAK_AFTER_HOURS:
             _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "rest",
                 "location": "Rest area",
-                "arrival_time": format_time(current_hour),  # FIX 1
+                "arrival_time": format_time(current_hour),
                 "duration_hours": BREAK_DURATION,
                 "lat": _lat,
                 "lng": _lng,
@@ -198,15 +210,12 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             continue
 
         # Need mandatory 10-hr reset?
-        # FIX 7: 10hr mandatory rest logged as sleeper berth — driver sleeps
-        # in the truck on multi-day OTR runs. FMCSA §395.1(g) allows sleeper
-        # berth time to satisfy the 10hr off-duty requirement.
         if drive_hours_today >= MAX_DRIVE_HOURS or (current_hour - shift_start_hour) >= MAX_WINDOW_HOURS:
             _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "rest",
                 "location": "Rest stop / sleeper berth",
-                "arrival_time": format_time(current_hour),  # FIX 1
+                "arrival_time": format_time(current_hour),
                 "duration_hours": REQUIRED_OFF_HOURS,
                 "lat": _lat,
                 "lng": _lng,
@@ -216,19 +225,16 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             continue
 
         if can_drive <= 0:
-            # Force a reset (sleeper berth)
             add_segment("sleeper", REQUIRED_OFF_HOURS)
             new_day()
             continue
 
         # Check fuel stop
-        # FIX 3: use > instead of >= so exactly 1000mi does NOT trigger a fuel stop
         miles_this_segment = (can_drive / total_drive_time) * total_miles
         if round(miles_since_fuel + miles_this_segment, 4) > FUEL_INTERVAL_MILES:
             drive_to_fuel = ((FUEL_INTERVAL_MILES - miles_since_fuel) / total_miles) * total_drive_time
             drive_to_fuel = min(drive_to_fuel, can_drive)
 
-            # Drive to fuel
             add_segment("driving", drive_to_fuel)
             drive_hours_today += drive_to_fuel
             on_duty_hours_today += drive_to_fuel
@@ -240,12 +246,11 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             miles_since_fuel += miles_driven
             miles_driven_total += miles_driven
 
-            # Fuel stop
             _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
                 "type": "fuel",
                 "location": "Fuel stop",
-                "arrival_time": format_time(current_hour),  # FIX 1
+                "arrival_time": format_time(current_hour),
                 "duration_hours": FUEL_STOP_HOURS,
                 "lat": _lat,
                 "lng": _lng,
@@ -269,8 +274,6 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         miles_driven_total += miles_driven
 
     # FIX 6: Check if dropoff would breach the 14hr window before adding it.
-    # Window check must come BEFORE the cycle check — a driver could need
-    # both a 10hr reset (window exhausted) and a 34hr restart (cycle exhausted).
     if (current_hour - shift_start_hour) + DROPOFF_HOURS > MAX_WINDOW_HOURS:
         _lat, _lng = coords_at_miles(miles_driven_total)
         stops.append({
@@ -303,7 +306,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
     stops.append({
         "type": "dropoff",
         "location": waypoints[2]["name"],
-        "arrival_time": format_time(current_hour),  # FIX 1
+        "arrival_time": format_time(current_hour),
         "duration_hours": DROPOFF_HOURS,
         "lat": waypoints[2]["lat"],
         "lng": waypoints[2]["lng"],
@@ -311,10 +314,12 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
     add_segment("on_duty", DROPOFF_HOURS)
     on_duty_hours_today += DROPOFF_HOURS
 
-    # Save final day
+    # Save final day with the same shift_start metadata
+    final_shift_start = shift_start_dt(day_start_hour)
     daily_logs.append({
         "day": day,
-        "date": (datetime.today() + timedelta(days=day - 1)).strftime("%Y-%m-%d"),
+        "date": final_shift_start.strftime("%Y-%m-%d"),
+        "start_time": final_shift_start.strftime("%Y-%m-%dT%H:%M:%S"),
         "segments": list(segments),
         "total_drive": round(drive_hours_today, 2),
         "total_on_duty": round(sum(

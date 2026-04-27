@@ -25,6 +25,7 @@ export interface LogSegment {
 export interface DailyLog {
   day: number;
   date: string;
+  start_time: string;       // ← ADD THIS LINE
   segments: LogSegment[];
   total_drive: number;
   total_on_duty: number;

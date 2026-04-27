@@ -40,15 +40,27 @@ export default function Locationautocomplete({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // FIX: Tracks the label that was just selected from the dropdown so we don't
+  // Tracks the label that was just selected from the dropdown so we don't
   // refetch/reopen when the parent's value updates back into us.
   const lastSelectedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!debouncedValue || debouncedValue.length < 2) return;
-    // Skip the fetch if this value came from a programmatic selection.
-    // Cleared the moment the user types again (see input onChange below).
-    if (debouncedValue === lastSelectedRef.current) return;
+    // FIX: Clear loading on every early-return path. Without this, after a
+    // selection the effect re-runs (because parent re-renders and either the
+    // debouncedValue or onError ref changes), the previous in-flight fetch
+    // is cancelled, the new effect early-returns via the lastSelectedRef
+    // guard, and no .finally ever fires to clear loading. Result: spinner
+    // gets stuck on. Setting loading=false in the early-return paths and in
+    // cleanup makes sure the indicator is only on while there's actually
+    // a fetch in flight.
+    if (!debouncedValue || debouncedValue.length < 2) {
+      setLoading(false);
+      return;
+    }
+    if (debouncedValue === lastSelectedRef.current) {
+      setLoading(false);
+      return;
+    }
 
     let cancelled = false;
     setLoading(true);
@@ -81,7 +93,14 @@ export default function Locationautocomplete({
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+      // Belt-and-suspenders: if the next effect run early-returns via one of
+      // the guards above, this cleanup also drops the spinner so we don't
+      // depend on the new effect to do it.
+      setLoading(false);
+    };
   }, [debouncedValue, onError]);
 
   useEffect(() => {
@@ -100,6 +119,7 @@ export default function Locationautocomplete({
     setSuggestions([]);
     setOpen(false);
     setHighlighted(-1);
+    setLoading(false); // immediate feedback: spinner gone the instant a pick is made
     inputRef.current?.blur();
   }, [onChange]);
 
@@ -161,9 +181,7 @@ export default function Locationautocomplete({
           value={value}
           placeholder={placeholder}
           onChange={e => {
-            // FIX: clear the just-selected guard the moment the user starts
-            // editing. Otherwise typing a new query right after a selection
-            // wouldn't refetch.
+            // clear the just-selected guard the moment the user starts editing
             if (
               lastSelectedRef.current !== null &&
               e.target.value !== lastSelectedRef.current
