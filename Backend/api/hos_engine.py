@@ -83,16 +83,17 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         drive_since_break = 0.0
         segments = []
 
-    # FIX 4 helper: split a long off-duty block (e.g. 34hr restart) across calendar days
-    def add_offduty_split(duration: float):
-        """Add an off_duty segment of any length, splitting at 24hr boundaries."""
+    # FIX 7: split a long rest block (e.g. 34hr restart) across calendar days,
+    # logged as sleeper berth — an OTR driver on a multi-day haul lives in the
+    # truck during long rests. FMCSA §395.1(g) allows sleeper berth time to
+    # satisfy the 10hr off-duty requirement.
+    def add_sleeper_split(duration: float):
+        """Add a sleeper segment of any length, splitting at 24hr boundaries."""
         remaining = duration
         while remaining > 0:
             hours_left_in_day = 24.0 - (current_hour - day_start_hour)
             chunk = min(remaining, hours_left_in_day)
-            # Sleeper berth split logic is not yet implemented, so off_duty is
-            # used as the proxy status for these extended rest segments.
-            add_segment("off_duty", chunk)
+            add_segment("sleeper", chunk)
             remaining = round(remaining - chunk, 6)
             if remaining > 0:
                 new_day()
@@ -160,8 +161,8 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
                 "lat": _lat,
                 "lng": _lng,
             })
-            # FIX 4: split 34hr restart across calendar day boundaries
-            add_offduty_split(RESTART_HOURS)
+            # FIX 7: 34hr restart logged as sleeper berth (split across days)
+            add_sleeper_split(RESTART_HOURS)
             new_day()
             cycle_hours = 0.0
             continue
@@ -180,6 +181,8 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
         )
 
         # Need a 30-min break?
+        # FMCSA §395.3(a)(3)(ii) allows the break as off-duty, on-duty, or
+        # sleeper berth. Off-duty is the most common in practice.
         if drive_since_break >= BREAK_AFTER_HOURS:
             _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
@@ -190,13 +193,14 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
                 "lat": _lat,
                 "lng": _lng,
             })
-            # Sleeper berth split logic is not yet implemented, so off_duty is
-            # used as the proxy status for this rest segment.
             add_segment("off_duty", BREAK_DURATION)
             drive_since_break = 0.0
             continue
 
         # Need mandatory 10-hr reset?
+        # FIX 7: 10hr mandatory rest logged as sleeper berth — driver sleeps
+        # in the truck on multi-day OTR runs. FMCSA §395.1(g) allows sleeper
+        # berth time to satisfy the 10hr off-duty requirement.
         if drive_hours_today >= MAX_DRIVE_HOURS or (current_hour - shift_start_hour) >= MAX_WINDOW_HOURS:
             _lat, _lng = coords_at_miles(miles_driven_total)
             stops.append({
@@ -207,17 +211,13 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
                 "lat": _lat,
                 "lng": _lng,
             })
-            # Sleeper berth split logic is not yet implemented, so off_duty is
-            # used as the proxy status for this reset segment.
-            add_segment("off_duty", REQUIRED_OFF_HOURS)
+            add_segment("sleeper", REQUIRED_OFF_HOURS)
             new_day()
             continue
 
         if can_drive <= 0:
-            # Force a reset
-            # Sleeper berth split logic is not yet implemented, so off_duty is
-            # used as the proxy status for this reset segment.
-            add_segment("off_duty", REQUIRED_OFF_HOURS)
+            # Force a reset (sleeper berth)
+            add_segment("sleeper", REQUIRED_OFF_HOURS)
             new_day()
             continue
 
@@ -281,7 +281,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             "lat": _lat,
             "lng": _lng,
         })
-        add_segment("off_duty", REQUIRED_OFF_HOURS)
+        add_segment("sleeper", REQUIRED_OFF_HOURS)
         new_day()
 
     # FIX 2: Check if dropoff would breach the cycle limit before adding it
@@ -295,7 +295,7 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             "lat": _lat,
             "lng": _lng,
         })
-        add_offduty_split(RESTART_HOURS)
+        add_sleeper_split(RESTART_HOURS)
         new_day()
         cycle_hours = 0.0
 

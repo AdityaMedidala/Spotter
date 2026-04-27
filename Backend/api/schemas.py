@@ -34,7 +34,7 @@ class Stop(Schema):
 
 
 class LogSegment(Schema):
-    status: str        # 'off_duty' | 'driving' | 'on_duty'
+    status: str        # 'off_duty' | 'driving' | 'on_duty' | 'sleeper'
     start_hour: float
     end_hour: float
 
