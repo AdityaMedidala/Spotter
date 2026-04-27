@@ -156,6 +156,7 @@ export default function LogPaginator({ result, fromLocation, toLocation }: Props
         totalDriveHours={result.total_drive_hours}
         fromLocation={fromLocation}
         toLocation={toLocation}
+        stops={result.stops}
       />
     </div>
   );

@@ -1,23 +1,26 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { DailyLog, LogSegment } from './types';
+import type { DailyLog, LogSegment, Stop } from './types';
 import { ELD_COLORS, ELD_LABELS } from './types';
 
 // ── EXACT PIXEL COORDINATES ──────────────────────────────────────────────────
-// Measured directly from blank-paper-log.png (513×518px)
-// by scanning pixel darkness/lightness values programmatically.
+// Measured directly from blank-paper-log.png (513×518px).
 //
 // Grid horizontal:
 //   GRID_LEFT  = 64    (first hour tick — midnight)
 //   GRID_RIGHT = 454   (last hour tick — midnight end)
 //   GRID_WIDTH = 390px for 24 hours → 16.25px per hour
 //
-// Row Y centres (midpoint of each duty-status band):
+// Row Y centres:
 //   Off Duty          y = 192
 //   Sleeper Berth     y = 209
 //   Driving           y = 226
 //   On Duty (ND)      y = 244
+//
+// Remarks zone (where rotated location labels live):
+//   REMARKS_TOP    = 260  (first pixel below the grid)
+//   REMARKS_LABEL  = 280  (where the rotated text starts)
 // ────────────────────────────────────────────────────────────────────────────
 const GRID_LEFT  = 64;
 const GRID_RIGHT = 454;
@@ -31,13 +34,17 @@ const ROW_Y: Record<LogSegment['status'], number> = {
   on_duty:  244,
 };
 
-const LINE_H = 8;   // thickness of the duty-status bar
+const LINE_H = 8;
+const CONNECTOR_W = 2;
 
-// ── Text field positions (approx, visually tuned) ────────────────────────────
+const REMARKS_TICK_TOP = 252;   // top of the small tick that drops from the grid
+const REMARKS_TICK_BOT = 268;   // where the tick ends and label begins
+const REMARKS_LABEL_Y  = 272;   // y at which the rotated label starts (extends downward)
+
+// ── Text field positions ─────────────────────────────────────────────────────
 const TEXT_FIELDS = {
   date:        { x: 55,  y: 25,  font: '10px JetBrains Mono, monospace' },
   totalMiles:  { x: 165, y: 25,  font: '10px JetBrains Mono, monospace' },
-  totalMilesLabel: { x: 155, y: 36, font: '7px JetBrains Mono, monospace' },
   carrier:     { x: 55,  y: 60,  font: '9px JetBrains Mono, monospace' },
   from:        { x: 55,  y: 80,  font: '9px JetBrains Mono, monospace' },
   to:          { x: 280, y: 80,  font: '9px JetBrains Mono, monospace' },
@@ -49,9 +56,20 @@ interface Props {
   totalDriveHours: number;
   fromLocation: string;
   toLocation: string;
+  // NEW: All trip stops. The component filters to those occurring on this day
+  // and renders rotated location labels below the grid.
+  stops?: Stop[];
 }
 
-export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLocation, toLocation }: Props) {
+interface RemarkLabel {
+  hour: number;        // 0–24, position along the grid for this day
+  label: string;       // text to display (e.g. "Pickup — St. Louis, MO")
+  color: string;       // accent color tied to stop type
+}
+
+export default function EldLogSheet({
+  log, totalMiles, totalDriveHours, fromLocation, toLocation, stops,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -61,9 +79,6 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // FIX: Cleanup guard — prevents stale draws when the effect re-runs
-    // (React 18 strict mode runs effects twice; img.onload from the first
-    // run could otherwise fire after a second run has already started).
     let cancelled = false;
 
     const img = new Image();
@@ -72,9 +87,7 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
     img.onload = () => {
       if (cancelled) return;
 
-      // FIX: Retina-aware sizing. Internal pixel buffer scales with DPR so
-      // the canvas stays sharp on 2x+ displays; CSS size stays at the
-      // image's natural dimensions.
+      // Retina-aware sizing
       const dpr = window.devicePixelRatio || 1;
       canvas.width  = img.naturalWidth  * dpr;
       canvas.height = img.naturalHeight * dpr;
@@ -82,45 +95,39 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
       canvas.style.height = `${img.naturalHeight}px`;
       ctx.scale(dpr, dpr);
 
-      // ── 1. Draw background image ──────────────────────────────────────────
+      // ── 1. Background ────────────────────────────────────────────────────
       ctx.drawImage(img, 0, 0);
 
-      // ── 2. Fill metadata text ─────────────────────────────────────────────
+      // ── 2. Metadata text ─────────────────────────────────────────────────
       ctx.fillStyle = '#111827';
 
-      // Date
       ctx.font = TEXT_FIELDS.date.font;
       ctx.fillText(formatDate(log.date), TEXT_FIELDS.date.x, TEXT_FIELDS.date.y);
 
-      // Miles driven today (driving segments total)
       const driveMiles = totalDriveHours > 0
         ? Math.round((log.total_drive / totalDriveHours) * totalMiles)
         : 0;
       ctx.font = TEXT_FIELDS.totalMiles.font;
       ctx.fillText(`${driveMiles} mi`, TEXT_FIELDS.totalMiles.x, TEXT_FIELDS.totalMiles.y);
 
-      // Carrier placeholder
       ctx.font = TEXT_FIELDS.carrier.font;
       ctx.fillStyle = '#374151';
       ctx.fillText('ELD Trip Planner', TEXT_FIELDS.carrier.x, TEXT_FIELDS.carrier.y);
 
-      // From / To
       ctx.font = TEXT_FIELDS.from.font;
       ctx.fillText(fromLocation, TEXT_FIELDS.from.x, TEXT_FIELDS.from.y);
       ctx.font = TEXT_FIELDS.to.font;
       ctx.fillText(toLocation, TEXT_FIELDS.to.x, TEXT_FIELDS.to.y);
 
-      // Day label (top right area)
       ctx.font = 'bold 9px JetBrains Mono, monospace';
       ctx.fillStyle = '#374151';
       ctx.fillText(`Day ${log.day}`, 440, 20);
 
-      // ── 3. Draw duty-status bars ──────────────────────────────────────────
+      // ── 3. Duty-status horizontal bars ───────────────────────────────────
       log.segments.forEach((seg) => {
         const rowY = ROW_Y[seg.status];
         if (rowY === undefined) return;
 
-        // Clamp hours to [0, 24]
         const start = Math.max(0, Math.min(24, seg.start_hour));
         const end   = Math.max(0, Math.min(24, seg.end_hour));
         if (end <= start) return;
@@ -128,22 +135,42 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
         const x = GRID_LEFT + start * HOUR_W;
         const w = (end - start) * HOUR_W;
 
-        // Shadow / glow
         ctx.shadowColor = ELD_COLORS[seg.status];
         ctx.shadowBlur  = 4;
-
-        // Bar
         ctx.fillStyle = ELD_COLORS[seg.status];
         ctx.fillRect(x, rowY - LINE_H / 2, w, LINE_H);
-
-        // Reset shadow
         ctx.shadowBlur = 0;
       });
 
-      // ── 4. Total hours column (right side) ───────────────────────────────
-      const TOTAL_X = 462;
+      // ── 4. Vertical connectors between status changes ────────────────────
+      for (let i = 0; i < log.segments.length - 1; i++) {
+        const cur  = log.segments[i];
+        const next = log.segments[i + 1];
 
-      const totals: Record<LogSegment['status'], number> = { off_duty: 0, sleeper: 0, driving: 0, on_duty: 0 };
+        const yCur  = ROW_Y[cur.status];
+        const yNext = ROW_Y[next.status];
+        if (yCur === undefined || yNext === undefined) continue;
+        if (yCur === yNext) continue;
+
+        const boundaryHour = Math.max(0, Math.min(24, cur.end_hour));
+        const x = GRID_LEFT + boundaryHour * HOUR_W;
+
+        const yTop = Math.min(yCur, yNext) + LINE_H / 2;
+        const yBot = Math.max(yCur, yNext) - LINE_H / 2;
+        if (yBot <= yTop) continue;
+
+        ctx.fillStyle = ELD_COLORS[next.status];
+        ctx.shadowColor = ELD_COLORS[next.status];
+        ctx.shadowBlur  = 3;
+        ctx.fillRect(x - CONNECTOR_W / 2, yTop, CONNECTOR_W, yBot - yTop);
+        ctx.shadowBlur = 0;
+      }
+
+      // ── 5. Total hours column (right side) ───────────────────────────────
+      const TOTAL_X = 462;
+      const totals: Record<LogSegment['status'], number> = {
+        off_duty: 0, sleeper: 0, driving: 0, on_duty: 0,
+      };
       log.segments.forEach((s) => {
         totals[s.status] = (totals[s.status] || 0) + (s.end_hour - s.start_hour);
       });
@@ -156,16 +183,37 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
         ctx.fillText(totals[status].toFixed(1), TOTAL_X, y + 3);
       });
 
-      // Running total should equal 24
       const total24 = Object.values(totals).reduce((a, b) => a + b, 0);
       ctx.font = '8px JetBrains Mono, monospace';
       ctx.fillStyle = '#374151';
       ctx.fillText(`${total24.toFixed(1)}h`, TOTAL_X, 260);
+
+      // ── 6. NEW: Remarks — rotated location labels below the grid ─────────
+      // Same style as the FMCSA John Doe example (page 18 of the guide):
+      // a thin tick from the grid drops into the remarks zone, then the
+      // location text is written diagonally (rotated 60°) so long names fit.
+      const remarks = buildRemarksForDay(log, stops ?? []);
+
+      remarks.forEach((r) => {
+        const x = GRID_LEFT + Math.max(0, Math.min(24, r.hour)) * HOUR_W;
+
+        // Tick line dropping from the grid into the remarks zone
+        ctx.fillStyle = r.color;
+        ctx.fillRect(x - 0.5, REMARKS_TICK_TOP, 1, REMARKS_TICK_BOT - REMARKS_TICK_TOP);
+
+        // Rotated label
+        ctx.save();
+        ctx.translate(x, REMARKS_LABEL_Y);
+        ctx.rotate((60 * Math.PI) / 180);
+        ctx.font = '7.5px JetBrains Mono, monospace';
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(r.label, 0, 0);
+        ctx.restore();
+      });
     };
 
     img.onerror = () => {
       if (cancelled) return;
-      // Fallback: draw a placeholder grid if image fails to load
       canvas.width  = 513;
       canvas.height = 518;
       ctx.fillStyle = '#f8fafc';
@@ -180,9 +228,11 @@ export default function EldLogSheet({ log, totalMiles, totalDriveHours, fromLoca
       img.onload = null;
       img.onerror = null;
     };
-  }, [log, totalMiles, totalDriveHours, fromLocation, toLocation]);
+  }, [log, totalMiles, totalDriveHours, fromLocation, toLocation, stops]);
 
-  const totalSegmentHours = log.segments.reduce((acc, seg) => acc + (seg.end_hour - seg.start_hour), 0);
+  const totalSegmentHours = log.segments.reduce(
+    (acc, seg) => acc + (seg.end_hour - seg.start_hour), 0,
+  );
 
   return (
     <div>
@@ -328,4 +378,54 @@ function formatHour(h: number): string {
   const period = hh < 12 ? 'AM' : 'PM';
   const displayH = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
   return `${displayH}:${mm.toString().padStart(2, '0')} ${period}`;
+}
+
+// Convert a stop into a "labeled hour mark" anchored to this day.
+// Returns null if the stop falls on a different calendar day than this log.
+function buildRemarksForDay(log: DailyLog, stops: Stop[]): RemarkLabel[] {
+  if (!stops || stops.length === 0) return [];
+
+  return stops
+    .map<RemarkLabel | null>((stop) => {
+      // arrival_time is ISO 8601 like "2026-04-27T19:00:00".
+      const arr = new Date(stop.arrival_time);
+      if (isNaN(arr.getTime())) return null;
+
+      // Match by calendar date. log.date is "YYYY-MM-DD" in trip-start TZ.
+      const yyyy = arr.getFullYear();
+      const mm   = String(arr.getMonth() + 1).padStart(2, '0');
+      const dd   = String(arr.getDate()).padStart(2, '0');
+      const stopDate = `${yyyy}-${mm}-${dd}`;
+      if (stopDate !== log.date) return null;
+
+      const hour = arr.getHours() + arr.getMinutes() / 60;
+
+      const TYPE_COLORS: Record<Stop['type'], string> = {
+        pickup:  '#16a34a',
+        dropoff: '#dc2626',
+        rest:    '#ea580c',
+        fuel:    '#2563eb',
+        restart: '#7c3aed',
+      };
+
+      const TYPE_PREFIX: Record<Stop['type'], string> = {
+        pickup:  'PU',
+        dropoff: 'DO',
+        rest:    'Rest',
+        fuel:    'Fuel',
+        restart: '34hr',
+      };
+
+      // Truncate long location strings so labels don't smash into each other.
+      const loc = stop.location.length > 22
+        ? stop.location.slice(0, 21) + '…'
+        : stop.location;
+
+      return {
+        hour,
+        label: `${TYPE_PREFIX[stop.type]} — ${loc}`,
+        color: TYPE_COLORS[stop.type],
+      };
+    })
+    .filter((r): r is RemarkLabel => r !== null);
 }
