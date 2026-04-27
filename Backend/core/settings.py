@@ -28,10 +28,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',  # MUST be first
-    'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.middleware.common.CommonMiddleware',  # MUST be second
+    'django.middleware.security.SecurityMiddleware',        # must be first
+    'whitenoise.middleware.WhiteNoiseMiddleware',           # right after Security
+    'corsheaders.middleware.CorsMiddleware',                # before CommonMiddleware
+    'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -80,7 +80,16 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# STATICFILES_STORAGE was removed in Django 4.2+ — use STORAGES dict instead.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -94,8 +103,6 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL', default=False, cast=bool)
 
 # Ensure CORS headers are added to ALL responses, including 404s and errors.
-# django-cors-headers skips responses that never matched a CORS origin — this
-# guarantees the header is present even on Django Ninja 404s.
 CORS_URLS_REGEX = r'^/api/.*$'
 
 CORS_ALLOW_HEADERS = [
