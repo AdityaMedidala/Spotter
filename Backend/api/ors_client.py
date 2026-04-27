@@ -16,11 +16,10 @@ async def geocode(place: str, client: httpx.AsyncClient) -> tuple[float, float]:
     if not features:
         raise ValueError(f"Location not found: {place!r}")
     coords = features[0]["geometry"]["coordinates"]
-    return coords[1], coords[0]  # lat, lng
+    return coords[1], coords[0]
 
 
 async def autocomplete_location(query: str) -> list[dict]:
-    """Return up to 6 location suggestions for the given query."""
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{BASE}/geocode/autocomplete",
@@ -29,7 +28,7 @@ async def autocomplete_location(query: str) -> list[dict]:
                 "text": query,
                 "size": 6,
                 "layers": "locality,region,country,address",
-                "boundary.country": "US",  # restrict to US; remove for worldwide
+                "boundary.country": "US",  # ← fixed
             },
             timeout=8.0,
         )
@@ -50,15 +49,13 @@ async def autocomplete_location(query: str) -> list[dict]:
 
 
 async def get_route(current: str, pickup: str, dropoff: str) -> dict:
-    # Single shared client — reuses the TCP connection across all 4 calls
-    # (3 geocodes + 1 directions) instead of opening fresh ones each time.
     async with httpx.AsyncClient(timeout=15.0) as client:
         c_lat, c_lng = await geocode(current, client)
         p_lat, p_lng = await geocode(pickup, client)
         d_lat, d_lng = await geocode(dropoff, client)
 
-        r = await client.post(
-            f"{BASE}/v2/directions/driving-car/geojson",
+        r = await client.post(  # ← fixed
+            f"{BASE}/v2/directions/driving-hgv/geojson",
             headers={"Authorization": ORS_KEY, "Content-Type": "application/json"},
             json={
                 "coordinates": [
