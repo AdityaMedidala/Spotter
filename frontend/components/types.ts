@@ -7,8 +7,12 @@ export interface TripRequest {
 }
 
 // ── API response ─────────────────────────────────────────────────────────────
+// 'start' is a frontend-synthesized stop type representing the moment the
+// driver begins their trip at the current_location. The backend never emits
+// this type — it's added by buildDisplayStops in page.tsx so the timeline
+// and ELD log labels reflect when events actually happen geographically.
 export interface Stop {
-  type: 'pickup' | 'dropoff' | 'rest' | 'fuel' | 'restart';
+  type: 'start' | 'pickup' | 'dropoff' | 'rest' | 'fuel' | 'restart';
   location: string;
   arrival_time: string;
   duration_hours: number;
@@ -25,7 +29,7 @@ export interface LogSegment {
 export interface DailyLog {
   day: number;
   date: string;
-  start_time: string;       // ← ADD THIS LINE
+  start_time: string;
   segments: LogSegment[];
   total_drive: number;
   total_on_duty: number;
@@ -42,6 +46,7 @@ export interface TripResult {
 
 // ── Stop colour map ───────────────────────────────────────────────────────────
 export const STOP_COLORS: Record<Stop['type'], string> = {
+  start:   '#eab308',  // amber, matches the current-location pin on the map
   pickup:  '#22c55e',
   dropoff: '#ef4444',
   rest:    '#f97316',
@@ -50,6 +55,7 @@ export const STOP_COLORS: Record<Stop['type'], string> = {
 };
 
 export const STOP_LABELS: Record<Stop['type'], string> = {
+  start:   '🚛 Trip Start',
   pickup:  '📦 Pickup',
   dropoff: '🏁 Dropoff',
   rest:    '💤 Rest',

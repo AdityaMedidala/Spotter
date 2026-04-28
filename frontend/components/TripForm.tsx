@@ -1,5 +1,4 @@
 'use client';
-import { useCallback } from 'react';
 import { useForm } from '@mantine/form';
 import { NumberInput, Stack } from '@mantine/core';
 import type { TripRequest } from './types';
@@ -29,36 +28,6 @@ export default function TripForm({ onSubmit, loading }: Props) {
     },
   });
 
-  // FIX: Stabilize callbacks so Locationautocomplete's effect doesn't refire
-  // on every parent render (which triggers duplicate ORS autocomplete calls).
-  const handleCurrentChange = useCallback(
-    (v: string) => form.setFieldValue('current_location', v),
-    [form],
-  );
-  const handlePickupChange = useCallback(
-    (v: string) => form.setFieldValue('pickup_location', v),
-    [form],
-  );
-  const handleDropoffChange = useCallback(
-    (v: string) => form.setFieldValue('dropoff_location', v),
-    [form],
-  );
-
-  const handleCurrentError = useCallback((msg: string | null) => {
-    if (msg) form.setFieldError('current_location', msg);
-    else form.clearFieldError('current_location');
-  }, [form]);
-
-  const handlePickupError = useCallback((msg: string | null) => {
-    if (msg) form.setFieldError('pickup_location', msg);
-    else form.clearFieldError('pickup_location');
-  }, [form]);
-
-  const handleDropoffError = useCallback((msg: string | null) => {
-    if (msg) form.setFieldError('dropoff_location', msg);
-    else form.clearFieldError('dropoff_location');
-  }, [form]);
-
   return (
     <form onSubmit={form.onSubmit(onSubmit)}>
       <Stack gap="md">
@@ -72,8 +41,11 @@ export default function TripForm({ onSubmit, loading }: Props) {
               label="Current Location"
               placeholder="e.g. Chicago, IL"
               value={form.values.current_location}
-              onChange={handleCurrentChange}
-              onError={handleCurrentError}
+              onChange={(v) => form.setFieldValue('current_location', v)}
+              onError={(msg) => {
+                if (msg) form.setFieldError('current_location', msg);
+                else form.clearFieldError('current_location');
+              }}
               error={form.errors.current_location as string}
               icon={<span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>📍</span>}
             />
@@ -82,8 +54,11 @@ export default function TripForm({ onSubmit, loading }: Props) {
               label="Pickup Location"
               placeholder="e.g. St. Louis, MO"
               value={form.values.pickup_location}
-              onChange={handlePickupChange}
-              onError={handlePickupError}
+              onChange={(v) => form.setFieldValue('pickup_location', v)}
+              onError={(msg) => {
+                if (msg) form.setFieldError('pickup_location', msg);
+                else form.clearFieldError('pickup_location');
+              }}
               error={form.errors.pickup_location as string}
               icon={<span style={{ color: 'var(--stop-pickup)', fontSize: '0.8rem' }}>▲</span>}
             />
@@ -92,8 +67,11 @@ export default function TripForm({ onSubmit, loading }: Props) {
               label="Dropoff Location"
               placeholder="e.g. Dallas, TX"
               value={form.values.dropoff_location}
-              onChange={handleDropoffChange}
-              onError={handleDropoffError}
+              onChange={(v) => form.setFieldValue('dropoff_location', v)}
+              onError={(msg) => {
+                if (msg) form.setFieldError('dropoff_location', msg);
+                else form.clearFieldError('dropoff_location');
+              }}
               error={form.errors.dropoff_location as string}
               icon={<span style={{ color: 'var(--stop-dropoff)', fontSize: '0.8rem' }}>■</span>}
             />
@@ -137,10 +115,10 @@ export default function TripForm({ onSubmit, loading }: Props) {
             }}>
               <div style={{
                 height: '100%',
-                width: `${Math.min((Number(form.values.cycle_used_hours || 0) / 70) * 100, 100)}%`,
-                background: Number(form.values.cycle_used_hours || 0) >= 60
+                width: `${Math.min((Number(form.values.cycle_used_hours ?? 0) / 70) * 100, 100)}%`,
+                background: Number(form.values.cycle_used_hours ?? 0) >= 60
                   ? 'var(--red)'
-                  : Number(form.values.cycle_used_hours || 0) >= 40
+                  : Number(form.values.cycle_used_hours ?? 0) >= 40
                     ? 'var(--amber)'
                     : 'var(--green)',
                 borderRadius: '2px',
@@ -157,7 +135,7 @@ export default function TripForm({ onSubmit, loading }: Props) {
             }}>
               <span>0 hr</span>
               <span style={{ color: 'var(--amber)' }}>
-                {Number(form.values.cycle_used_hours || 0).toFixed(1)} / 70 hrs used
+                {Number(form.values.cycle_used_hours ?? 0).toFixed(1)} / 70 hrs used
               </span>
               <span>70 hr</span>
             </div>

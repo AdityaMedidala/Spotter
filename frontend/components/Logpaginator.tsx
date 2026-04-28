@@ -1,16 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import type { TripResult } from './types';
+import type { TripResult, Stop } from './types';
 import EldLogSheet from './EldLogSheet';
 
 interface Props {
   result: TripResult;
   fromLocation: string;
   toLocation: string;
+  // Optional override for the stops passed to EldLogSheet's remarks zone.
+  // When set, the ELD log shows display-corrected stops (e.g. Trip Start at
+  // current_location, with the real pickup at the geographically correct
+  // time) instead of the raw engine output.
+  displayStops?: Stop[];
 }
 
-export default function LogPaginator({ result, fromLocation, toLocation }: Props) {
+export default function LogPaginator({ result, fromLocation, toLocation, displayStops }: Props) {
   const [currentDay, setCurrentDay] = useState(0);
   const { daily_logs, total_miles } = result;
   const totalDays = daily_logs.length;
@@ -156,7 +161,7 @@ export default function LogPaginator({ result, fromLocation, toLocation }: Props
         totalDriveHours={result.total_drive_hours}
         fromLocation={fromLocation}
         toLocation={toLocation}
-        stops={result.stops}
+        stops={displayStops ?? result.stops}
       />
     </div>
   );

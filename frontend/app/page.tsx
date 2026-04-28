@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import TripForm from '@/components/TripForm';
 import TripSummary from '@/components/TripSummary';
 import LogPaginator from '@/components/Logpaginator';
-import type { TripRequest, TripResult } from '@/components/types';
+import type { TripRequest, TripResult, Stop } from '@/components/types';
 
 function formatArrival(iso: string): string {
   try {
@@ -14,6 +14,135 @@ function formatArrival(iso: string): string {
       hour: 'numeric', minute: '2-digit', hour12: true
     });
   } catch { return iso; }
+}
+
+// ── Display-stop transform ───────────────────────────────────────────────────
+// The engine treats hour 0 as "pickup at the pickup location" with 1 hr of
+// on-duty time. For trips where the current_location is far from the pickup
+// (e.g. NY → Atlanta → LA), this produces a misleading first label: the
+// timeline says "Pickup at Atlanta, 12:00 AM" but the truck is actually in
+// New York at midnight, driving south.
+//
+// The duty-status data, total drive hours, and HOS rest cadence are all
+// correct — the engine drives the full combined route distance. Only the
+// pickup-event timing label is anchored at hour 0 instead of when the truck
+// physically arrives at the pickup.
+//
+// This frontend transform uses the polyline geometry to compute when the
+// truck reaches the pickup location, then produces a "displayStops" array:
+//   • the first stop becomes a 'start' event at the current_location
+//   • a real 'pickup' event is inserted at the geographically correct time
+//   • all other stops pass through unchanged
+//
+// Map data is NOT transformed — the green pickup marker on the map already
+// sits at the correct geographic location.
+// ────────────────────────────────────────────────────────────────────────────
+
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8; // earth radius in miles
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function naiveIso(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  );
+}
+
+function buildDisplayStops(result: TripResult, currentLocation: string): Stop[] {
+  if (!result.stops.length || result.polyline.length < 2) return result.stops;
+  const firstStop = result.stops[0];
+  if (firstStop.type !== 'pickup') return result.stops;
+  if (result.total_miles <= 0 || result.total_drive_hours <= 0) return result.stops;
+
+  // 1. Find the polyline index closest to the pickup waypoint.
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < result.polyline.length; i++) {
+    const [lat, lng] = result.polyline[i];
+    const d = haversineMiles(lat, lng, firstStop.lat, firstStop.lng);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+
+  // 2. Sum cumulative road-following miles from polyline[0] to that index.
+  let deadheadMiles = 0;
+  for (let i = 1; i <= bestIdx; i++) {
+    deadheadMiles += haversineMiles(
+      result.polyline[i - 1][0], result.polyline[i - 1][1],
+      result.polyline[i][0],     result.polyline[i][1],
+    );
+  }
+
+  const deadheadFrac = deadheadMiles / result.total_miles;
+  const deadheadDriveHours = deadheadFrac * result.total_drive_hours;
+
+  // For same-region trips (current ≈ pickup), the deadhead is negligible and
+  // the original engine output is already accurate. Skip the transform.
+  if (deadheadDriveHours < 0.25) return result.stops;
+
+  // 3. Walk the daily logs' driving segments, accumulating drive time.
+  //    When cumulative drive time hits deadheadDriveHours, that's when the
+  //    truck physically arrives at the pickup.
+  let cumulativeDriving = 0;
+  let pickupIso: string | null = null;
+
+  outer: for (const log of result.daily_logs) {
+    const shiftStartTs = new Date(log.start_time).getTime();
+    if (isNaN(shiftStartTs)) continue;
+
+    for (const seg of log.segments) {
+      if (seg.status !== 'driving') continue;
+      const segDur = seg.end_hour - seg.start_hour;
+      if (cumulativeDriving + segDur >= deadheadDriveHours - 1e-6) {
+        const offset = deadheadDriveHours - cumulativeDriving;
+        const tripHourIntoShift = seg.start_hour + offset;
+        const ts = shiftStartTs + tripHourIntoShift * 3600 * 1000;
+        pickupIso = naiveIso(new Date(ts));
+        break outer;
+      }
+      cumulativeDriving += segDur;
+    }
+  }
+
+  if (!pickupIso) return result.stops;
+
+  // 4. Construct the display stops.
+  //    The 1 hr of on-duty time at hour 0 represents pre-trip work at the
+  //    current location (paperwork, inspection). The geographic pickup itself
+  //    is just a waypoint event with 0 hr — the loading time was already
+  //    accounted for at hour 0 by the engine.
+  const startStop: Stop = {
+    type: 'start',
+    location: currentLocation || firstStop.location,
+    arrival_time: firstStop.arrival_time,
+    duration_hours: firstStop.duration_hours,
+    lat: result.polyline[0][0],
+    lng: result.polyline[0][1],
+  };
+
+  const realPickup: Stop = {
+    type: 'pickup',
+    location: firstStop.location,
+    arrival_time: pickupIso,
+    duration_hours: 0,
+    lat: firstStop.lat,
+    lng: firstStop.lng,
+  };
+
+  const others = result.stops.slice(1);
+  const all: Stop[] = [startStop, realPickup, ...others];
+  all.sort((a, b) =>
+    new Date(a.arrival_time).getTime() - new Date(b.arrival_time).getTime(),
+  );
+  return all;
 }
 
 // Leaflet is SSR-incompatible — dynamic import with ssr:false is required
@@ -57,6 +186,14 @@ export default function Home() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [formVals, setFormVals] = useState<TripRequest | null>(null);
+
+  // Display-only stops for the timeline + ELD remarks. The map continues to
+  // use result.stops so the green pickup marker stays at its real geographic
+  // location. See buildDisplayStops above for the rationale.
+  const displayStops = useMemo<Stop[]>(
+    () => (result ? buildDisplayStops(result, formVals?.current_location ?? '') : []),
+    [result, formVals?.current_location],
+  );
 
   const handleSubmit = async (values: TripRequest) => {
     setLoading(true);
@@ -299,20 +436,32 @@ export default function Home() {
                 </div>
               </div>
 
-              <RouteMap result={result} />
+              <RouteMap
+                result={result}
+                currentLocation={formVals?.current_location}
+              />
             </div>
 
             {/* Stops timeline */}
             <div className="card fade-up fade-up-2">
               <p className="section-label" style={{ marginBottom: '1rem' }}>── Stop Timeline</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                {result.stops.map((stop, i) => {
+                {displayStops.map((stop, i) => {
                   const colors: Record<string, string> = {
-                    pickup: 'var(--stop-pickup)', dropoff: 'var(--stop-dropoff)',
-                    rest: 'var(--stop-rest)', fuel: 'var(--stop-fuel)', restart: 'var(--stop-restart)',
+                    start:   'var(--amber)',
+                    pickup:  'var(--stop-pickup)',
+                    dropoff: 'var(--stop-dropoff)',
+                    rest:    'var(--stop-rest)',
+                    fuel:    'var(--stop-fuel)',
+                    restart: 'var(--stop-restart)',
                   };
                   const icons: Record<string, string> = {
-                    pickup: '📦', dropoff: '🏁', rest: '💤', fuel: '⛽', restart: '🔄',
+                    start:   '🚛',
+                    pickup:  '📦',
+                    dropoff: '🏁',
+                    rest:    '💤',
+                    fuel:    '⛽',
+                    restart: '🔄',
                   };
                   const color = colors[stop.type] ?? 'var(--text-muted)';
                   return (
@@ -320,7 +469,7 @@ export default function Home() {
                       display: 'flex',
                       gap: '0.75rem',
                       padding: '0.6rem 0',
-                      borderBottom: i < result.stops.length - 1 ? '1px solid var(--border)' : 'none',
+                      borderBottom: i < displayStops.length - 1 ? '1px solid var(--border)' : 'none',
                     }}>
                       {/* Timeline dot + line */}
                       <div style={{
@@ -340,7 +489,7 @@ export default function Home() {
                         }}>
                           {icons[stop.type]}
                         </div>
-                        {i < result.stops.length - 1 && (
+                        {i < displayStops.length - 1 && (
                           <div style={{
                             width: '1px',
                             flex: 1,
@@ -359,7 +508,7 @@ export default function Home() {
                           alignItems: 'baseline',
                         }}>
                           <span style={{ color, fontWeight: 600, textTransform: 'uppercase', fontSize: '0.7rem' }}>
-                            {stop.type.replace('_', ' ')}
+                            {stop.type === 'start' ? 'Trip Start' : stop.type.replace('_', ' ')}
                           </span>
                           <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>
                             {formatArrival(stop.arrival_time)}
@@ -368,9 +517,11 @@ export default function Home() {
                         <div style={{ color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
                           {stop.location}
                         </div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>
-                          {stop.duration_hours.toFixed(1)} hr stop
-                        </div>
+                        {stop.duration_hours > 0 && (
+                          <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>
+                            {stop.duration_hours.toFixed(1)} hr stop
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -384,6 +535,7 @@ export default function Home() {
                 result={result}
                 fromLocation={formVals?.current_location ?? ''}
                 toLocation={formVals?.dropoff_location ?? ''}
+                displayStops={displayStops}
               />
             </div>
           </div>

@@ -5,9 +5,9 @@ import type { DailyLog, LogSegment, Stop } from './types';
 import { ELD_COLORS, ELD_LABELS } from './types';
 
 // ── EXACT PIXEL COORDINATES ──────────────────────────────────────────────────
-// Coordinates are expressed in a fixed "logical" space of 513×518 — the
-// dimensions of the original FMCSA blank log form. Higher-res source PNGs
-// are scaled down into this space, so all measured constants stay valid.
+// Logical drawing space is fixed at 513×518 — the dimensions of the original
+// FMCSA blank log form. Higher-resolution source PNGs scale down into this
+// space, so all measured constants stay valid regardless of source size.
 //
 // Grid horizontal:
 //   GRID_LEFT  = 64    (first hour tick — midnight)
@@ -29,18 +29,13 @@ const ROW_Y: Record<LogSegment['status'], number> = {
   on_duty:  244,
 };
 
-// FIX: thin sharp lines, not thick rounded bars. Real FMCSA paper logs are
-// drawn with a pen stroke maybe 1-2px relative to the row height. We use 3
-// here — visible at screen size without dominating the form. Combined with
-// butt caps and miter joins, this produces clean L-shapes at each transition
-// instead of pill-shaped blobs.
 const LINE_W = 3;
 
 const REMARKS_TICK_TOP = 252;
 const REMARKS_TICK_BOT = 268;
 const REMARKS_LABEL_Y  = 272;
 
-const RENDER_SCALE = 3; // 513×518 → 1539×1554 internal buffer for crispness
+const RENDER_SCALE = 3;
 
 const TEXT_FIELDS = {
   date:        { x: 55,  y: 25,  font: '10px JetBrains Mono, monospace' },
@@ -124,11 +119,7 @@ export default function EldLogSheet({
       ctx.fillStyle = '#374151';
       ctx.fillText(`Day ${log.day}`, 440, 20);
 
-      // ── 3. Duty-status path: each segment draws its own bar + the connector
-      //       to the next segment as ONE continuous L-path. With miter joins,
-      //       the corner is a clean sharp 90° angle instead of two separate
-      //       rectangles colliding awkwardly.
-      // ─────────────────────────────────────────────────────────────────────
+      // ── 3. Duty-status path: bar + connector to next segment per L-path
       ctx.lineWidth = LINE_W;
       ctx.lineCap   = 'butt';
       ctx.lineJoin  = 'miter';
@@ -147,12 +138,9 @@ export default function EldLogSheet({
 
         ctx.beginPath();
         ctx.strokeStyle = ELD_COLORS[seg.status];
-
-        // Horizontal bar
         ctx.moveTo(x1, rowY);
         ctx.lineTo(x2, rowY);
 
-        // Connector to next segment (same path, so the bend is mitered)
         const next = log.segments[i + 1];
         if (next) {
           const nextRowY = ROW_Y[next.status];
@@ -192,7 +180,6 @@ export default function EldLogSheet({
       remarks.forEach((r) => {
         const x = GRID_LEFT + Math.max(0, Math.min(24, r.hour)) * HOUR_W;
 
-        // Thin tick line dropping into remarks zone (pointer, not part of path)
         ctx.fillStyle = r.color;
         ctx.fillRect(x - 0.5, REMARKS_TICK_TOP, 1, REMARKS_TICK_BOT - REMARKS_TICK_TOP);
 
@@ -373,6 +360,8 @@ function formatHour(h: number): string {
   return `${displayH}:${mm.toString().padStart(2, '0')} ${period}`;
 }
 
+// Convert each stop into a remark anchored to the SHIFT's hour axis.
+// 'start' is a frontend-only type representing trip-begin at current_location.
 function buildRemarksForShift(log: DailyLog, stops: Stop[]): RemarkLabel[] {
   if (!stops || stops.length === 0) return [];
 
@@ -383,6 +372,24 @@ function buildRemarksForShift(log: DailyLog, stops: Stop[]): RemarkLabel[] {
     (max, s) => Math.max(max, s.end_hour), 0,
   );
   const TOL = 0.02;
+
+  const TYPE_COLORS: Record<Stop['type'], string> = {
+    start:   '#eab308',
+    pickup:  '#16a34a',
+    dropoff: '#dc2626',
+    rest:    '#ea580c',
+    fuel:    '#2563eb',
+    restart: '#7c3aed',
+  };
+
+  const TYPE_PREFIX: Record<Stop['type'], string> = {
+    start:   'Start',
+    pickup:  'PU',
+    dropoff: 'DO',
+    rest:    'Rest',
+    fuel:    'Fuel',
+    restart: '34hr',
+  };
 
   return stops
     .map<RemarkLabel | null>((stop) => {
@@ -401,22 +408,6 @@ function buildRemarksForShift(log: DailyLog, stops: Stop[]): RemarkLabel[] {
         if (`${yyyy}-${mm}-${dd}` !== log.date) return null;
         hour = arr.getHours() + arr.getMinutes() / 60;
       }
-
-      const TYPE_COLORS: Record<Stop['type'], string> = {
-        pickup:  '#16a34a',
-        dropoff: '#dc2626',
-        rest:    '#ea580c',
-        fuel:    '#2563eb',
-        restart: '#7c3aed',
-      };
-
-      const TYPE_PREFIX: Record<Stop['type'], string> = {
-        pickup:  'PU',
-        dropoff: 'DO',
-        rest:    'Rest',
-        fuel:    'Fuel',
-        restart: '34hr',
-      };
 
       const loc = stop.location.length > 28
         ? stop.location.slice(0, 27) + '…'
