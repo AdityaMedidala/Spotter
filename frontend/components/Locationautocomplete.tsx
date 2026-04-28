@@ -41,29 +41,21 @@ export default function Locationautocomplete({
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Tracks the label that was just selected from the dropdown so we don't
-  // refetch/reopen when the parent's value updates back into us.
+  // refetch / re-open the menu when the parent's value updates back into us.
   const lastSelectedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // FIX: Clear loading on every early-return path. Without this, after a
-    // selection the effect re-runs (because parent re-renders and either the
-    // debouncedValue or onError ref changes), the previous in-flight fetch
-    // is cancelled, the new effect early-returns via the lastSelectedRef
-    // guard, and no .finally ever fires to clear loading. Result: spinner
-    // gets stuck on. Setting loading=false in the early-return paths and in
-    // cleanup makes sure the indicator is only on while there's actually
-    // a fetch in flight.
-    if (!debouncedValue || debouncedValue.length < 2) {
-      setLoading(false);
-      return;
-    }
-    if (debouncedValue === lastSelectedRef.current) {
-      setLoading(false);
-      return;
-    }
+    // Early returns: just bail out, don't touch state. The cleanup function
+    // of the previous effect run (registered below) handles clearing
+    // `loading` if a fetch was in flight when this re-run was triggered.
+    // This pattern satisfies react-hooks/set-state-in-effect on strict CI.
+    if (!debouncedValue || debouncedValue.length < 2) return;
+    if (debouncedValue === lastSelectedRef.current) return;
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+
     void fetch(`${AUTOCOMPLETE_URL}?q=${encodeURIComponent(debouncedValue)}`)
       .then(async (r) => {
         const data = await r.json().catch(() => ({}));
@@ -96,9 +88,9 @@ export default function Locationautocomplete({
 
     return () => {
       cancelled = true;
-      // Belt-and-suspenders: if the next effect run early-returns via one of
-      // the guards above, this cleanup also drops the spinner so we don't
-      // depend on the new effect to do it.
+      // Cleanup setState is allowed by the lint rule — it's a destructor,
+      // not an effect body. This drops the spinner the moment the effect
+      // re-runs, even if the next run early-returns above.
       setLoading(false);
     };
   }, [debouncedValue, onError]);

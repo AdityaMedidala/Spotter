@@ -27,7 +27,7 @@ const STOP_RADIUS: Record<Stop['type'], number> = {
   start: 0, pickup: 10, dropoff: 10, rest: 7, fuel: 7, restart: 9,
 };
 
-interface Props { result: TripResult; }
+interface Props { result: TripResult; currentLocation?: string;}
 
 export default function RouteMap({ result }: Props) {
   const { polyline, stops } = result;
