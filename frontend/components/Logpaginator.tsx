@@ -8,10 +8,6 @@ interface Props {
   result: TripResult;
   fromLocation: string;
   toLocation: string;
-  // Optional override for the stops passed to EldLogSheet's remarks zone.
-  // When set, the ELD log shows display-corrected stops (e.g. Trip Start at
-  // current_location, with the real pickup at the geographically correct
-  // time) instead of the raw engine output.
   displayStops?: Stop[];
 }
 

@@ -39,20 +39,14 @@ export default function Locationautocomplete({
   const debouncedValue = useDebounce(value, 280);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Tracks the label that was just selected from the dropdown so we don't
-  // refetch / re-open the menu when the parent's value updates back into us.
   const lastSelectedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Early returns: just bail out, don't touch state. The cleanup function
-    // of the previous effect run (registered below) handles clearing
-    // `loading` if a fetch was in flight when this re-run was triggered.
-    // This pattern satisfies react-hooks/set-state-in-effect on strict CI.
     if (!debouncedValue || debouncedValue.length < 2) return;
     if (debouncedValue === lastSelectedRef.current) return;
 
     let cancelled = false;
+
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
 
@@ -88,9 +82,6 @@ export default function Locationautocomplete({
 
     return () => {
       cancelled = true;
-      // Cleanup setState is allowed by the lint rule — it's a destructor,
-      // not an effect body. This drops the spinner the moment the effect
-      // re-runs, even if the next run early-returns above.
       setLoading(false);
     };
   }, [debouncedValue, onError]);
@@ -111,7 +102,7 @@ export default function Locationautocomplete({
     setSuggestions([]);
     setOpen(false);
     setHighlighted(-1);
-    setLoading(false); // immediate feedback: spinner gone the instant a pick is made
+    setLoading(false);
     inputRef.current?.blur();
   }, [onChange]);
 
@@ -173,7 +164,6 @@ export default function Locationautocomplete({
           value={value}
           placeholder={placeholder}
           onChange={e => {
-            // clear the just-selected guard the moment the user starts editing
             if (
               lastSelectedRef.current !== null &&
               e.target.value !== lastSelectedRef.current

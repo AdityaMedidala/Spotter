@@ -15,29 +15,6 @@ function formatArrival(iso: string): string {
     });
   } catch { return iso; }
 }
-
-// ── Display-stop transform ───────────────────────────────────────────────────
-// The engine treats hour 0 as "pickup at the pickup location" with 1 hr of
-// on-duty time. For trips where the current_location is far from the pickup
-// (e.g. NY → Atlanta → LA), this produces a misleading first label: the
-// timeline says "Pickup at Atlanta, 12:00 AM" but the truck is actually in
-// New York at midnight, driving south.
-//
-// The duty-status data, total drive hours, and HOS rest cadence are all
-// correct — the engine drives the full combined route distance. Only the
-// pickup-event timing label is anchored at hour 0 instead of when the truck
-// physically arrives at the pickup.
-//
-// This frontend transform uses the polyline geometry to compute when the
-// truck reaches the pickup location, then produces a "displayStops" array:
-//   • the first stop becomes a 'start' event at the current_location
-//   • a real 'pickup' event is inserted at the geographically correct time
-//   • all other stops pass through unchanged
-//
-// Map data is NOT transformed — the green pickup marker on the map already
-// sits at the correct geographic location.
-// ────────────────────────────────────────────────────────────────────────────
-
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8; // earth radius in miles
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -89,8 +66,6 @@ function buildDisplayStops(result: TripResult, currentLocation: string): Stop[] 
   if (deadheadDriveHours < 0.25) return result.stops;
 
   // 3. Walk the daily logs' driving segments, accumulating drive time.
-  //    When cumulative drive time hits deadheadDriveHours, that's when the
-  //    truck physically arrives at the pickup.
   let cumulativeDriving = 0;
   let pickupIso: string | null = null;
 
@@ -113,12 +88,6 @@ function buildDisplayStops(result: TripResult, currentLocation: string): Stop[] 
   }
 
   if (!pickupIso) return result.stops;
-
-  // 4. Construct the display stops.
-  //    The 1 hr of on-duty time at hour 0 represents pre-trip work at the
-  //    current location (paperwork, inspection). The geographic pickup itself
-  //    is just a waypoint event with 0 hr — the loading time was already
-  //    accounted for at hour 0 by the engine.
   const startStop: Stop = {
     type: 'start',
     location: currentLocation || firstStop.location,
@@ -145,7 +114,6 @@ function buildDisplayStops(result: TripResult, currentLocation: string): Stop[] 
   return all;
 }
 
-// Leaflet is SSR-incompatible — dynamic import with ssr:false is required
 const RouteMap = dynamic(() => import('@/components/RouteMap'), {
   ssr: false,
   loading: () => (

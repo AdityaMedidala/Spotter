@@ -21,12 +21,6 @@ async def geocode(place: str, client: httpx.AsyncClient) -> tuple[float, float]:
 
 
 async def reverse_geocode(lat: float, lng: float, client: httpx.AsyncClient) -> str:
-    """Convert lat/lng → 'City, ST' string. Falls back to nearest locality.
-
-    On any failure (timeout, no result, etc.) returns an empty string so the
-    caller can decide on a fallback label. We never raise here because rest
-    stops are best-effort labels — the trip is still valid without them.
-    """
     try:
         r = await client.get(
             f"{BASE}/geocode/reverse",
@@ -133,14 +127,7 @@ async def get_route(current: str, pickup: str, dropoff: str) -> dict:
 
 
 async def enrich_stop_locations(stops: list[dict]) -> list[dict]:
-    """Reverse-geocode rest/fuel/restart stops in-place and return them.
-
-    Pickup and dropoff already have human-readable names from waypoints, so
-    they're skipped. Generic stop types ('rest', 'fuel', 'restart') get their
-    'location' field replaced with the actual city/state.
-    """
     GENERIC_TYPES = {"rest", "fuel", "restart"}
-
     # Filter targets first so we know what we're awaiting.
     targets = [
         stop for stop in stops
@@ -156,9 +143,6 @@ async def enrich_stop_locations(stops: list[dict]) -> list[dict]:
         "fuel":    "Fuel stop near",
         "restart": "34hr restart near",
     }
-
-    # Run all reverse-geocode calls in parallel — for a 3-day trip with 4-6
-    # rest/fuel stops, this drops enrichment time from ~1.2s to ~250ms.
     async with httpx.AsyncClient(timeout=10.0) as client:
         cities = await asyncio.gather(
             *(reverse_geocode(s["lat"], s["lng"], client) for s in targets),

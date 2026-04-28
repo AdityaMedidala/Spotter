@@ -42,9 +42,7 @@ class LogSegment(Schema):
 class DailyLog(Schema):
     day: int
     date: str
-    start_time: str    # ISO 8601 wall-clock when this shift started; the
-                       # frontend uses this to compute remark x-positions
-                       # in shift-relative time so they align with the bars.
+    start_time: str
     segments: List[LogSegment]
     total_drive: float
     total_on_duty: float

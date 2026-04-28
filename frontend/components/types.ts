@@ -5,12 +5,6 @@ export interface TripRequest {
   dropoff_location: string;
   cycle_used_hours: number;
 }
-
-// ── API response ─────────────────────────────────────────────────────────────
-// 'start' is a frontend-synthesized stop type representing the moment the
-// driver begins their trip at the current_location. The backend never emits
-// this type — it's added by buildDisplayStops in page.tsx so the timeline
-// and ELD log labels reflect when events actually happen geographically.
 export interface Stop {
   type: 'start' | 'pickup' | 'dropoff' | 'rest' | 'fuel' | 'restart';
   location: string;

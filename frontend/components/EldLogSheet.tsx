@@ -3,17 +3,6 @@
 import { useRef, useEffect } from 'react';
 import type { DailyLog, LogSegment, Stop } from './types';
 import { ELD_COLORS, ELD_LABELS } from './types';
-
-// ── EXACT PIXEL COORDINATES ──────────────────────────────────────────────────
-// Logical drawing space is fixed at 513×518 — the dimensions of the original
-// FMCSA blank log form. Higher-resolution source PNGs scale down into this
-// space, so all measured constants stay valid regardless of source size.
-//
-// Grid horizontal:
-//   GRID_LEFT  = 64    (first hour tick — midnight)
-//   GRID_RIGHT = 454   (last hour tick — midnight end)
-//   GRID_WIDTH = 390px for 24 hours → 16.25px per hour
-// ────────────────────────────────────────────────────────────────────────────
 const LOGICAL_W = 513;
 const LOGICAL_H = 518;
 

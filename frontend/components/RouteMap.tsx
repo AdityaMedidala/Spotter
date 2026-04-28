@@ -8,7 +8,6 @@ import type { TripResult, Stop } from './types';
 import { STOP_COLORS, STOP_LABELS } from './types';
 import 'leaflet/dist/leaflet.css';
 
-// ── Auto-fit bounds to route ─────────────────────────────────────────────────
 function FitBounds({ polyline }: { polyline: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
@@ -18,11 +17,6 @@ function FitBounds({ polyline }: { polyline: [number, number][] }) {
   }, [map, polyline]);
   return null;
 }
-
-// ── Stop marker radius and label ─────────────────────────────────────────────
-// 'start' is a frontend-only type used by the timeline & ELD remarks; it never
-// reaches the map (the map renders raw result.stops, not transformed display
-// stops). The 0 here is just to satisfy TypeScript's exhaustive Record check.
 const STOP_RADIUS: Record<Stop['type'], number> = {
   start: 0, pickup: 10, dropoff: 10, rest: 7, fuel: 7, restart: 9,
 };

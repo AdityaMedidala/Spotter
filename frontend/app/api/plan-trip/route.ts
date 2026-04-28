@@ -5,12 +5,11 @@ const DJANGO =
   process.env.NEXT_PUBLIC_API_URL ??
   'http://localhost:8000';
 
-const TIMEOUT_MS = 30_000; // ORS routing + geocoding can take a few seconds; 30s is generous
+const TIMEOUT_MS = 30_000;
 
 export async function POST(request: NextRequest) {
   const upstreamUrl = `${DJANGO}/api/plan-trip`;
 
-  // FIX: Abort guard so a hung Django/ORS doesn't keep this proxy waiting forever.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 

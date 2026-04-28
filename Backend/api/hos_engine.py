@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
-# HOS Constants (70hr/8day property carrier)
+# HOS Constants
 MAX_DRIVE_HOURS = 11.0
 MAX_WINDOW_HOURS = 14.0
 REQUIRED_OFF_HOURS = 10.0
@@ -159,11 +159,6 @@ def calculate_trip(route_data: Dict, cycle_used_hours: float) -> Dict[str, Any]:
             new_day()
             cycle_hours = 0.0
             continue
-
-        # How much can we drive right now?
-        # Use wall-clock elapsed since shift start for the 14hr window —
-        # off-duty breaks (e.g. the 30-min break) do NOT extend the 14hr
-        # driving window per § 395.3(a)(2).
         cycle_remaining = MAX_CYCLE_HOURS - cycle_hours
         can_drive = min(
             MAX_DRIVE_HOURS - drive_hours_today,

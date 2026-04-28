@@ -23,10 +23,6 @@ async def plan_trip(request, payload: TripInput):
         raise HttpError(502, f"Routing service unavailable: {e}")
 
     result = calculate_trip(route_data, payload.cycle_used_hours)
-
-    # Reverse-geocode generic stops (rest/fuel/restart) so the ELD log
-    # remarks zone shows real city names instead of "Rest area".
-    # Best-effort: failures fall back to the original generic strings.
     try:
         result["stops"] = await enrich_stop_locations(result["stops"])
     except httpx.HTTPError:
