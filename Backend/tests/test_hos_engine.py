@@ -1,30 +1,6 @@
-"""
-HOS Engine Test Suite — v3.0  (COMPREHENSIVE / FIXED)
-======================================================
-Validates against FMCSA Interstate Truck Driver's Guide to Hours of Service
-(April 2022).  Property carrier, 70 hr/8-day schedule, no adverse conditions.
 
-Fixes over v1/v2
-----------------
-  * D3  — was measuring rest-period end, not last-driving-end. Fixed.
-  * A2  — tz-aware vs tz-naive datetime comparison could crash. Fixed.
-  * A1  — parse_arrival called twice per stop. Cached.
-  * Break detection — FMCSA allows break as on_duty OR off_duty OR sleeper.
-                      Was checking off_duty only. Fixed everywhere.
-  * Named constants for every HOS threshold. Single EPSILON used throughout.
-  * stops_of_type results cached before check() to avoid double-calling.
-  * New sections: N (input validation / engine robustness),
-                  O (exact 2000 mi fuel boundary),
-                  P (float / oversized cycle values),
-                  Q (zero-distance / zero-time trip),
-                  R (cycle mid-segment edge cases),
-                  S (14-hr window: driving ends ≤ 14 hr, not segment end).
-
-Run: python test_hos_engine_v3.py
-"""
-
-import sys
-import os
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime
 
 # ── Path setup ──────────────────────────────────────────────────────────────
